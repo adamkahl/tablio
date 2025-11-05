@@ -146,7 +146,7 @@ async function loadGroups() {
     
     const editGroup = async () => {
       // Create modal for editing
-      showGroupEditModal(groupName, groupCategory, index);
+      showGroupEditModal(groupName, groupCategory, false);
     };
     
     editBtn.onclick = editGroup;
@@ -175,7 +175,7 @@ async function loadGroups() {
 }
 
 // Show group edit modal
-function showGroupEditModal(currentName, currentCategory, index) {
+function showGroupEditModal(currentName, currentCategory, isAdding) {
   const modal = document.createElement('div');
   modal.style.cssText = `
     position: fixed;
@@ -201,7 +201,7 @@ function showGroupEditModal(currentName, currentCategory, index) {
       box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
     ">
       <h2 style="margin: 0 0 1.5rem 0; color: #1f2937; font-size: 1.5rem;">
-        <i class="fas fa-edit" style="color: #6366f1;"></i> Edit Group
+        <i class="fas fa-${isAdding ? 'plus' : 'edit'}" style="color: #6366f1;"></i> ${isAdding ? 'Add' : 'Edit'} Group
       </h2>
       
       <div style="margin-bottom: 1rem;">
@@ -315,34 +315,44 @@ function showGroupEditModal(currentName, currentCategory, index) {
       typeof g === 'string' ? { name: g, category: '' } : g
     );
     
-    // Check if new name already exists (excluding current group)
-    const nameExists = normalizedGroups.some((g, i) => 
-      i !== index && g.name === newName
-    );
-    
-    if (nameExists) {
+    // Check if new name already exists
+    const nameExists = normalizedGroups.some(g => g.name === newName);
+    if (nameExists && (!isAdding || newName !== currentName)) {
       alert('A group with that name already exists!');
       return;
     }
     
-    const oldName = normalizedGroups[index].name;
-    
-    // Update the group
-    normalizedGroups[index] = { name: newName, category: newCategory };
-    
-    // Update all pairings that use this group
-    if (oldName !== newName) {
-      pairings.forEach(pairing => {
-        if (pairing.group === oldName) {
-          pairing.group = newName;
-        }
-      });
+    if (isAdding) {
+      // Adding a new group
+      normalizedGroups.push({ name: newName, category: newCategory });
+    } else {
+      // Updating existing group
+      const groupIndex = normalizedGroups.findIndex(g => g.name === currentName);
+      if (groupIndex === -1) {
+        alert('Group not found. It may have been deleted.');
+        modal.remove();
+        return;
+      }
+      
+      const oldName = normalizedGroups[groupIndex].name;
+      
+      // Update the group
+      normalizedGroups[groupIndex] = { name: newName, category: newCategory };
+      
+      // Update all pairings that use this group
+      if (oldName !== newName) {
+        pairings.forEach(pairing => {
+          if (pairing.group === oldName) {
+            pairing.group = newName;
+          }
+        });
+      }
     }
     
     await browser.storage.local.set({ groups: normalizedGroups, pairings });
     await loadGroups();
     await loadPairings();
-    showStatus('Group updated');
+    showStatus(isAdding ? 'Group added' : 'Group updated');
     modal.remove();
   };
   
@@ -433,7 +443,7 @@ async function reorderGroups(fromIndex, toIndex) {
 
 // Add a new group
 async function addGroup() {
-  showGroupEditModal('', '', -1);
+  showGroupEditModal('', '', true);
 }
 
 // Save pairings to storage
