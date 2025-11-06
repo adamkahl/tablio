@@ -72,7 +72,7 @@ function addPairingRow(url = '', name = '', emoji = '', group = '', groups = [],
   const container = document.getElementById('pairings-container');
   const div = document.createElement('div');
   div.className = 'pairing-item';
-  div.draggable = true;
+  div.draggable = true; // Make the entire element draggable
   if (index !== null) div.dataset.index = index;
 
   // Build group options
@@ -210,6 +210,9 @@ function addPairingRow(url = '', name = '', emoji = '', group = '', groups = [],
     }, 200);
   };
 
+  // Remove the drag handle event listeners - no longer needed
+  // The entire div is draggable, but we'll prevent drag from non-handle elements
+
   // Pairing drag and drop handlers
   div.addEventListener('dragstart', handlePairingDragStart);
   div.addEventListener('dragover', handlePairingDragOver);
@@ -229,6 +232,14 @@ function clearPairingDropIndicators() {
 }
 
 function handlePairingDragStart(e) {
+  // Only allow dragging from the handle
+  const isDragHandle = e.target.classList.contains('fa-grip-vertical');
+  
+  if (!isDragHandle) {
+    e.preventDefault();
+    return;
+  }
+  
   draggedPairing = this;
   this.style.opacity = '0.4';
   e.dataTransfer.effectAllowed = 'move';
