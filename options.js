@@ -698,6 +698,53 @@ async function importSettings(file) {
   }
 }
 
+async function loadRecommendedDefaults() {
+  try {
+    const resp = await fetch('default-config.json');
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const importData = await resp.json();
+
+    if (!confirm('This will replace all current settings with the recommended defaults. Continue?')) {
+      return;
+    }
+
+    await browser.storage.local.set({
+      pairings: importData.pairings || [],
+      groups: importData.groups || [],
+      autoTidyEnabled: importData.autoTidyEnabled ?? false
+    });
+
+    await loadGroups();
+    await loadPairings();
+    await loadSettings();
+    showStatus('Recommended defaults loaded');
+  } catch (error) {
+    alert(`Failed to load recommended defaults: ${error.message}`);
+  }
+}
+
+async function clearAllSettings() {
+  if (!confirm('This will delete ALL patterns, groups, and settings. This cannot be undone. Continue?')) {
+    return;
+  }
+
+  // Double confirmation for safety
+  if (!confirm('Are you absolutely sure? All your configuration will be permanently deleted.')) {
+    return;
+  }
+
+  await browser.storage.local.set({
+    pairings: [],
+    groups: [],
+    autoTidyEnabled: false
+  });
+
+  await loadGroups();
+  await loadPairings();
+  await loadSettings();
+  showStatus('All settings cleared');
+}
+
 function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
@@ -804,6 +851,8 @@ document.getElementById('import-file').addEventListener('change', (e) => {
     importSettings(e.target.files[0]);
   }
 });
+document.getElementById('load-defaults').addEventListener('click', loadRecommendedDefaults);
+document.getElementById('clear-all').addEventListener('click', clearAllSettings);
 
 // New listeners: search + bulk actions
 document.getElementById('pattern-search').addEventListener('input', (e) => {

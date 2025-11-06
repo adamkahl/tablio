@@ -37,6 +37,7 @@ FILES=(
     "options.css"
     "icons"
     "lib"
+    "default-config.json"
 )
 
 # Build Firefox version
