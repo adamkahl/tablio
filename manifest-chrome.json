@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Tablio",
   "version": "1.1.0",
-  "description": "Automatically rename and organize tabs using URL rules, groups, colors, and tags.",
+  "description": "Rename and organize browser tabs automatically using customizable URL-based rules, groups, colors, and tags.",
   "homepage_url": "https://github.com/adamkahl/zen-extension",
   "author": "Adam Kahl",
   "permissions": [
