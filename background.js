@@ -128,16 +128,24 @@ browser.tabs.onRemoved.addListener((tabId) => {
   originalTitles.delete(tabId);
 });
 
+// Helper: only operate on normal browser windows (avoid Glance/popup/devtools)
+async function getFocusedNormalWindow() {
+  const win = await browser.windows.getLastFocused();
+  if (win && win.type && win.type !== 'normal') return null;
+  return win;
+}
+
 // Main action: rename tabs based on pairings and organize by groups
 async function tidy() {
-  const [{ pairings, groups }, currentWindow] = await Promise.all([
-    browser.storage.local.get({ pairings: [], groups: [] }),
-    browser.windows.getLastFocused()
+  const currentWindow = await getFocusedNormalWindow();
+  if (!currentWindow) return;
+
+  const [{ pairings, groups }] = await Promise.all([
+    browser.storage.local.get({ pairings: [], groups: [] })
   ]);
 
-  const tabs = await browser.tabs.query({ 
-    windowId: currentWindow.id,
-    currentWindow: true 
+  const tabs = await browser.tabs.query({
+    windowId: currentWindow.id
   });
 
   // Separate pinned and unpinned tabs
@@ -237,9 +245,10 @@ async function tidy() {
     })
   );
 
-  // Move tabs into their sorted order
+  // Move tabs into their sorted order (never before the pinned boundary)
   const tabIds = tabsWithGroups.map(({ tab }) => tab.id);
-  await browser.tabs.move(tabIds, { index: firstUnpinnedIndex });
+  const startIndex = Math.max(firstUnpinnedIndex, pinnedTabs.length);
+  await browser.tabs.move(tabIds, { index: startIndex });
 }
 
 // Debounced auto-tidy to prevent excessive operations
@@ -247,15 +256,18 @@ function scheduleAutoTidy() {
   clearTimeout(autoTidyTimeout);
   autoTidyTimeout = setTimeout(() => {
     tidy();
-  }, 1000); // Wait 1 second after last tab change
+  }, 1000);
 }
 
 // Check if auto-tidy is enabled and trigger if so
 async function maybeAutoTidy() {
   const { autoTidyEnabled } = await browser.storage.local.get({ autoTidyEnabled: false });
-  if (autoTidyEnabled) {
-    scheduleAutoTidy();
-  }
+  if (!autoTidyEnabled) return;
+
+  const win = await browser.windows.getLastFocused();
+  if (win && win.type && win.type !== 'normal') return; // skip Glance/popups
+
+  scheduleAutoTidy();
 }
 
 // Listen for tab events
