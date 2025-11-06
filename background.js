@@ -130,8 +130,23 @@ browser.tabs.onRemoved.addListener((tabId) => {
 
 // Helper: only operate on normal browser windows (avoid Glance/popup/devtools)
 async function getFocusedNormalWindow() {
-  const win = await browser.windows.getLastFocused();
-  if (win && win.type && win.type !== 'normal') return null;
+  const win = await browser.windows.getLastFocused({ populate: true });
+  if (!win) return null;
+
+  // Rule 1: Explicitly ignore non-normal window types
+  if (win.type && win.type !== 'normal') {
+    console.debug('Ignoring non-normal window type:', win.type);
+    return null;
+  }
+
+  // Rule 2: Heuristic for Zen Browser's "Glance" feature.
+  // Assume that a window with only one tab and no pinned tabs is a temporary Glance window.
+  const isLikelyGlanceWindow = win.tabs && win.tabs.length <= 1 && !win.tabs.some(t => t.pinned);
+  if (isLikelyGlanceWindow) {
+    console.debug('Ignoring likely Glance window.');
+    return null;
+  }
+
   return win;
 }
 
@@ -148,13 +163,32 @@ async function tidy() {
     windowId: currentWindow.id
   });
 
-  // Separate pinned and unpinned tabs
+  // In Zen Browser, we need to exclude from reordering:
+  // 1. Pinned tabs (tab.pinned === true)
+  // 2. Bookmarked tabs (they sit between pinned and regular tabs)
+  
+  // Zen Browser marks bookmarked tabs with a special attribute
+  // They are unpinned but should not be moved
+  const isBookmarkedTab = (tab) => {
+    // Zen Browser specific: bookmarked tabs have skipTabGroups or are in a special container
+    return tab.skipTabGroups === true || 
+           tab.isInZenSidebar === true ||
+           (tab.cookieStoreId && tab.cookieStoreId.includes('zen-sidebar'));
+  };
+
+  // Separate tabs into categories
   const pinnedTabs = tabs.filter(tab => tab.pinned);
-  const unpinnedTabs = tabs.filter(tab => !tab.pinned);
+  const bookmarkedTabs = tabs.filter(tab => !tab.pinned && isBookmarkedTab(tab));
+  const regularTabs = tabs.filter(tab => !tab.pinned && !isBookmarkedTab(tab));
+  
+  if (regularTabs.length === 0) return;
 
-  if (unpinnedTabs.length === 0) return;
-
-  const firstUnpinnedIndex = unpinnedTabs[0].index;
+  // Find the safe starting index: after all pinned and bookmarked tabs
+  // This is where regular tabs should start
+  const allImmovableTabs = [...pinnedTabs, ...bookmarkedTabs];
+  const safeStartIndex = allImmovableTabs.length > 0 
+    ? Math.max(...allImmovableTabs.map(t => t.index)) + 1
+    : 0;
 
   // Create a map of group names to their order based on groups array
   const groupOrderMap = new Map();
@@ -163,8 +197,8 @@ async function tidy() {
     groupOrderMap.set(groupName, index);
   });
 
-  // Associate tabs with their pairings and groups
-  const tabsWithGroups = unpinnedTabs.map(tab => {
+  // Associate tabs with their pairings and groups (only regular tabs)
+  const tabsWithGroups = regularTabs.map(tab => {
     const pairing = findPairing(pairings, tab.url);
     let groupName = pairing?.group || '';
     let group = findGroup(groups, groupName);
@@ -182,7 +216,7 @@ async function tidy() {
     const hasGroupCategory = group && typeof group === 'object' && group.category;
 
     // Determine if the title should be modified at all
-    const shouldModifyTitle = hasPairingName || hasGroupCategory;
+    const shouldModifyTitle = hasPairingName || hasGroupCategory || (pairing && pairing.emoji);
     
     // Always use the original title as the base
     const originalTitle = getOriginalTitle(tab);
@@ -245,10 +279,13 @@ async function tidy() {
     })
   );
 
-  // Move tabs into their sorted order (never before the pinned boundary)
+  // Move tabs into their sorted order, starting from the safe index
+  // This ensures we NEVER move tabs above pinned/bookmarked tabs
   const tabIds = tabsWithGroups.map(({ tab }) => tab.id);
-  const startIndex = Math.max(firstUnpinnedIndex, pinnedTabs.length);
-  await browser.tabs.move(tabIds, { index: startIndex });
+  
+  if (tabIds.length > 0) {
+    await browser.tabs.move(tabIds, { index: safeStartIndex });
+  }
 }
 
 // Debounced auto-tidy to prevent excessive operations
@@ -264,8 +301,14 @@ async function maybeAutoTidy() {
   const { autoTidyEnabled } = await browser.storage.local.get({ autoTidyEnabled: false });
   if (!autoTidyEnabled) return;
 
-  const win = await browser.windows.getLastFocused();
-  if (win && win.type && win.type !== 'normal') return; // skip Glance/popups
+  // Use the full check to see if we are in a valid window
+  const win = await getFocusedNormalWindow();
+  if (!win) {
+    // If getFocusedNormalWindow returns null, it's a Glance window or other invalid type.
+    // Do not schedule a tidy operation.
+    console.debug('Auto-tidy skipped for non-normal or Glance window.');
+    return;
+  }
 
   scheduleAutoTidy();
 }
