@@ -478,6 +478,7 @@ body {
   font-size: .9rem;
   line-height: 1;
   min-height: 18px;
+  min-width: 0;
 }
 
 .pairing-summary > * {
@@ -491,6 +492,9 @@ body {
   font-weight: 600;
   color: var(--zen-primary);
   line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .pairing-summary .emoji {
@@ -500,6 +504,10 @@ body {
 
 .pairing-summary .arrow {
   color: #9ca3af;
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+  vertical-align: middle;
 }
 
 .pairing-summary .group-badge {
@@ -511,6 +519,19 @@ body {
   font-size: .7rem;
   font-weight: 600;
   white-space: nowrap;
+}
+
+.pairing-summary .name {
+  padding: 0.15rem 0.5rem;
+  border: 2px solid #c7d2fe;       /* indigo-200 */
+  background: #eef2ff;              /* indigo-50 */
+  color: #1f2937;                   /* slate-800 */
+  border-radius: 9999px;            /* pill */
+  font-weight: 600;
+  white-space: nowrap;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Ensure icons don’t shift vertically */
