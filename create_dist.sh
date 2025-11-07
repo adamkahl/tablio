@@ -32,9 +32,7 @@ mkdir -p dist
 # List of files to copy
 FILES=(
     "background.js"
-    "options.html"
-    "options.js"
-    "options.css"
+    "options"
     "icons"
     "lib"
     "default-config.json"

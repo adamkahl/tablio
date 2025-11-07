@@ -724,7 +724,7 @@ async function importSettings(file) {
 
 async function loadRecommendedDefaults() {
   try {
-    const resp = await fetch('default-config.json');
+    const resp = await fetch('../default-config.json');
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const importData = await resp.json();
 
