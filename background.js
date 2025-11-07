@@ -313,13 +313,21 @@ async function maybeAutoTidy() {
   scheduleAutoTidy();
 }
 
+// Listen for messages from popup
+browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === 'tidy') {
+    tidy();
+    sendResponse({ success: true });
+  }
+  return true; // Keep the message channel open for async response
+});
+
 // Listen for tab events
 browser.tabs.onCreated.addListener(() => {
   maybeAutoTidy();
 });
 
-// Toolbar button click handler
-// Chrome uses browser.action, Firefox uses browser.browserAction
+// Toolbar button click handler (fallback for browsers without popup)
 const action = browser.action || browser.browserAction;
 action.onClicked.addListener(() => {
   tidy();

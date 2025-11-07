@@ -32,6 +32,8 @@ mkdir -p dist
 # List of files to copy
 FILES=(
     "background.js"
+    "popup.html"
+    "popup.js"
     "options"
     "icons"
     "lib"
