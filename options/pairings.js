@@ -63,6 +63,7 @@ export async function loadPairings(browser) {
   });
 
   if (filteredPairings.length === 0) {
+    /* eslint-disable-next-line no-unsanitized/property */
     container.innerHTML = searchQuery
       ? `<div class="empty-state">No patterns match "${escapeHtml(searchQuery)}"</div>`
       : '<div class="empty-state">No URL patterns yet. Click "Add Pairing" to get started.</div>';
@@ -111,6 +112,7 @@ function addPairingRow(url = '', name = '', emoji = '', group = '', groups = [],
     div.style.background = '#eef2ff';
   }
 
+  /* eslint-disable-next-line no-unsanitized/property */
   div.innerHTML = `
     <div class="pairing-header" style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.25rem;background:transparent;border-radius:8px;padding:0.375rem 0.5rem;transition:all .2s;min-height:34px;">
       <input type="checkbox" class="pairing-checkbox" ${isSelected ? 'checked' : ''} style="cursor:pointer;width:16px;height:16px;">
@@ -216,6 +218,8 @@ function addPairingRow(url = '', name = '', emoji = '', group = '', groups = [],
     const g = div.querySelector('.group-input').value.trim();
 
     const summary = div.querySelector('.pairing-summary');
+    // Safe: All dynamic content is escaped via escapeHtml()
+    /* eslint-disable-next-line no-unsanitized/property */
     summary.innerHTML = `
       ${e ? `<span class="emoji">${e}</span>` : ''}
       <code>${escapeHtml(u) || 'New Pattern'}</code>

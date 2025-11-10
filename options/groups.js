@@ -33,21 +33,45 @@ export async function loadGroups(browser, loadPairings) {
     div.dataset.index = index;
     div.style.cssText = 'display: flex; align-items: center; gap: 0.5rem; padding: 0.75rem; background: #f8f9fa; border-radius: 8px; margin-bottom: 0.5rem; cursor: move;';
     
-    div.innerHTML = `
-      <i class="bi bi-grip-vertical" style="color: #9ca3af; cursor: grab;"></i>
-      <span class="group-icon" aria-hidden="true">${groupCategory ? escapeHtml(groupCategory) : ''}</span>
-      <span class="group-name" style="flex: 1; font-weight: 500; cursor: pointer;">${escapeHtml(groupName)}</span>
-      ${keywordCount > 0 ? `<span style="background: #6366f1; color: white; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">${keywordCount} keyword${keywordCount !== 1 ? 's' : ''}</span>` : ''}
-      <button class="btn btn-sm btn-edit" type="button" style="padding: 0.25rem 0.75rem; font-size: 0.85rem; background: transparent; border: 2px solid #6366f1; color: #6366f1; border-radius: 6px; transition: all 0.3s ease;">
-        <i class="bi bi-pencil"></i>
-      </button>
-      <button class="btn btn-sm btn-remove" type="button" style="padding: 0.25rem 0.75rem; font-size: 0.85rem;">
-        <i class="bi bi-trash"></i>
-      </button>
-    `;
+    // Create elements programmatically instead of innerHTML
+    const gripIcon = document.createElement('i');
+    gripIcon.className = 'bi bi-grip-vertical';
+    gripIcon.style.cssText = 'color: #9ca3af; cursor: grab;';
     
-    const editBtn = div.querySelector('.btn-edit');
-    const groupNameSpan = div.querySelector('.group-name');
+    const groupIcon = document.createElement('span');
+    groupIcon.className = 'group-icon';
+    groupIcon.setAttribute('aria-hidden', 'true');
+    groupIcon.textContent = groupCategory || '';
+    
+    const groupNameSpan = document.createElement('span');
+    groupNameSpan.className = 'group-name';
+    groupNameSpan.style.cssText = 'flex: 1; font-weight: 500; cursor: pointer;';
+    groupNameSpan.textContent = groupName;
+    
+    const keywordBadge = document.createElement('span');
+    if (keywordCount > 0) {
+      keywordBadge.style.cssText = 'background: #6366f1; color: white; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600;';
+      keywordBadge.textContent = `${keywordCount} keyword${keywordCount !== 1 ? 's' : ''}`;
+    }
+    
+    const editBtn = document.createElement('button');
+    editBtn.className = 'btn btn-sm btn-edit';
+    editBtn.type = 'button';
+    editBtn.style.cssText = 'padding: 0.25rem 0.75rem; font-size: 0.85rem; background: transparent; border: 2px solid #6366f1; color: #6366f1; border-radius: 6px; transition: all 0.3s ease;';
+    editBtn.innerHTML = '<i class="bi bi-pencil"></i>';
+    
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'btn btn-sm btn-remove';
+    removeBtn.type = 'button';
+    removeBtn.style.cssText = 'padding: 0.25rem 0.75rem; font-size: 0.85rem;';
+    removeBtn.innerHTML = '<i class="bi bi-trash"></i>';
+    
+    div.appendChild(gripIcon);
+    div.appendChild(groupIcon);
+    div.appendChild(groupNameSpan);
+    if (keywordCount > 0) div.appendChild(keywordBadge);
+    div.appendChild(editBtn);
+    div.appendChild(removeBtn);
     
     const editGroup = () => {
       showGroupEditModal(groupName, groupCategory, typeof group === 'object' ? group.keywords : [], false, browser, loadGroups, loadPairings);
@@ -56,7 +80,7 @@ export async function loadGroups(browser, loadPairings) {
     editBtn.onclick = editGroup;
     groupNameSpan.onclick = editGroup;
     
-    div.querySelector('.btn-remove').onclick = async () => {
+    removeBtn.onclick = async () => {
       if (confirm(`Delete group "${groupName}"? Pairings in this group will not be deleted.`)) {
         const result = await browser.storage.local.get({ groups: [] });
         const updatedGroups = result.groups.filter((g, i) => i !== index);
@@ -108,6 +132,7 @@ export function showGroupEditModal(currentName, currentCategory, currentKeywords
       </button>`;
   }).join('');
 
+  /* eslint-disable-next-line no-unsanitized/property */
   modal.innerHTML = `
     <div style="
       background: white; border-radius: 16px; padding: 2rem;

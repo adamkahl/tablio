@@ -89,7 +89,7 @@ function getOriginalTitle(tab) {
 async function renameTab(tabId, title) {
   try {
     // Chrome MV3 uses chrome.scripting.executeScript
-    if (typeof chrome !== 'undefined' && chrome.scripting) {
+    if (typeof chrome !== 'undefined' && chrome.scripting && chrome.scripting.executeScript) {
       await chrome.scripting.executeScript({
         target: { tabId: tabId },
         func: (newTitle) => { document.title = newTitle; },
