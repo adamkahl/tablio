@@ -153,20 +153,57 @@ async function getFocusedNormalWindow() {
 // Helper: Check if a tab is a Zen Browser Glance tab
 function isGlanceTab(tab) {
   // Zen Browser marks Glance tabs with specific properties
-  // They may have skipTabGroups, be in a special container, or have other markers
-  return tab.skipTabGroups === true || 
-         tab.isInZenSidebar === true ||
-         tab.hidden === true || // Glance tabs are often hidden
-         (tab.cookieStoreId && tab.cookieStoreId.includes('zen-glance')) ||
-         (tab.url && tab.url.startsWith('about:blank')) && tab.discarded; // Temporary Glance tabs
+  
+  // Method 1: Check for Zen-specific markers
+  if (tab.skipTabGroups === true) return true;
+  if (tab.isInZenSidebar === true) return true;
+  if (tab.hidden === true) return true; // Glance tabs are often hidden
+  
+  // Method 2: Check cookie store container
+  if (tab.cookieStoreId) {
+    if (tab.cookieStoreId.includes('zen-glance')) return true;
+    if (tab.cookieStoreId.includes('zen-sidebar')) return true;
+    // Zen may use other container IDs for split view
+    if (tab.cookieStoreId.includes('userContext')) {
+      // Additional check: if it's a temporary container with specific patterns
+      return false; // Don't exclude regular containers
+    }
+  }
+  
+  // Method 3: Check for split-view Glance tabs by URL pattern
+  // Glance tabs often load about:blank or special Zen URLs
+  if (tab.url) {
+    if (tab.url.startsWith('about:blank')) return true;
+    if (tab.url.startsWith('zen://')) return true;
+    if (tab.url.startsWith('chrome://')) return true;
+  }
+  
+  // Method 4: Check tab properties that indicate it's a Glance preview
+  // Glance tabs typically have very low IDs relative to other tabs in split view
+  // and may not have a title yet
+  if (tab.status === 'loading' && (!tab.title || tab.title === 'New Tab')) {
+    return true;
+  }
+  
+  return false;
 }
 
 // Helper: Check if a tab is bookmarked in Zen Browser
 const isBookmarkedTab = (tab) => {
   // Zen Browser specific: bookmarked tabs have skipTabGroups or are in a special container
-  return tab.skipTabGroups === true || 
-         tab.isInZenSidebar === true ||
-         (tab.cookieStoreId && tab.cookieStoreId.includes('zen-sidebar'));
+  if (tab.skipTabGroups === true) return true;
+  if (tab.isInZenSidebar === true) return true;
+  
+  // Check for sidebar-specific cookie store
+  if (tab.cookieStoreId && tab.cookieStoreId.includes('zen-sidebar')) {
+    return true;
+  }
+  
+  // Bookmarked tabs in Zen may have specific index patterns
+  // They typically appear after pinned tabs but before regular tabs
+  // However, we can't rely solely on index, so use other markers
+  
+  return false;
 };
 
 // Main action: rename tabs based on pairings and organize by groups
@@ -182,11 +219,21 @@ async function tidy() {
     windowId: currentWindow.id
   });
 
-  // In Zen Browser, we need to exclude from reordering:
-  // 1. Pinned tabs (tab.pinned === true)
-  // 2. Bookmarked tabs (they sit between pinned and regular tabs)
-  // 3. Glance tabs (temporary preview tabs)
-  
+  // DEBUG: Log all tabs to see their properties
+  console.log('All tabs in window:', tabs.map(t => ({
+    id: t.id,
+    index: t.index,
+    title: t.title,
+    url: t.url,
+    pinned: t.pinned,
+    hidden: t.hidden,
+    skipTabGroups: t.skipTabGroups,
+    isInZenSidebar: t.isInZenSidebar,
+    cookieStoreId: t.cookieStoreId,
+    status: t.status,
+    discarded: t.discarded
+  })));
+
   // Separate tabs into categories
   const pinnedTabs = tabs.filter(tab => tab.pinned);
   const bookmarkedTabs = tabs.filter(tab => !tab.pinned && isBookmarkedTab(tab));
@@ -196,6 +243,13 @@ async function tidy() {
     !isBookmarkedTab(tab) && 
     !isGlanceTab(tab)
   );
+  
+  console.log('Tab categories:', {
+    pinned: pinnedTabs.length,
+    bookmarked: bookmarkedTabs.length,
+    glance: glanceTabs.length,
+    regular: regularTabs.length
+  });
   
   if (regularTabs.length === 0) return;
 
