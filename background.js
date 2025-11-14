@@ -8,6 +8,7 @@ const originalTitles = new Map();
 
 // Track tabs that were detected as Glance tabs
 const glanceTabIds = new Set();
+const isSplitViewTab = (tab) => typeof tab?.groupId === 'number' && tab.groupId !== -1;
 
 // Debounce timer for auto-tidy
 let autoTidyTimeout = null;
@@ -111,81 +112,32 @@ async function renameTab(tabId, title) {
 }
 
 // Helper: Check if a tab is a Zen Browser Glance tab
-function isGlanceTab(tab) {
-  // Log ALL properties of the tab for debugging
-  console.log('=== GLANCE TAB DETECTION DEBUG ===');
-  console.log('Tab ID:', tab.id);
-  console.log('Tab properties:', {
-    id: tab.id,
-    index: tab.index,
-    windowId: tab.windowId,
-    highlighted: tab.highlighted,
-    active: tab.active,
-    pinned: tab.pinned,
-    status: tab.status,
-    incognito: tab.incognito,
-    width: tab.width,
-    height: tab.height,
-    discarded: tab.discarded,
-    autoDiscardable: tab.autoDiscardable,
-    mutedInfo: tab.mutedInfo,
-    url: tab.url,
-    title: tab.title,
-    favIconUrl: tab.favIconUrl,
-    pendingUrl: tab.pendingUrl,
-    sessionId: tab.sessionId,
-    // Zen-specific properties
-    hidden: tab.hidden,
-    skipTabGroups: tab.skipTabGroups,
-    isInZenSidebar: tab.isInZenSidebar,
-    cookieStoreId: tab.cookieStoreId,
-    // Any other properties
-    ...Object.keys(tab).reduce((acc, key) => {
-      if (!['id', 'index', 'windowId', 'highlighted', 'active', 'pinned', 'status', 
-            'incognito', 'width', 'height', 'discarded', 'autoDiscardable', 'mutedInfo',
-            'url', 'title', 'favIconUrl', 'pendingUrl', 'sessionId', 'hidden', 
-            'skipTabGroups', 'isInZenSidebar', 'cookieStoreId'].includes(key)) {
-        acc[key] = tab[key];
-      }
-      return acc;
-    }, {})
-  });
+async function isGlanceTab(tab) {
+  if (!tab) return false;
 
-  // First check if this tab has any current Glance markers
-  const checks = {
-    skipTabGroups: tab.skipTabGroups === true,
-    isInZenSidebar: tab.isInZenSidebar === true,
-    hidden: tab.hidden === true,
-    cookieStoreIdGlance: tab.cookieStoreId && tab.cookieStoreId.includes('zen-glance'),
-    cookieStoreIdSidebar: tab.cookieStoreId && tab.cookieStoreId.includes('zen-sidebar'),
-    urlAboutBlank: tab.url && tab.url.startsWith('about:blank'),
-    urlZen: tab.url && tab.url.startsWith('zen://'),
-    urlChrome: tab.url && tab.url.startsWith('chrome://'),
-    loadingNewTab: tab.status === 'loading' && (!tab.title || tab.title === 'New Tab')
-  };
-
-  console.log('Glance detection checks:', checks);
-
-  const hasCurrentGlanceMarkers = Object.values(checks).some(v => v);
-  console.log('Has current Glance markers:', hasCurrentGlanceMarkers);
-  console.log('Previously tracked as Glance:', glanceTabIds.has(tab.id));
-
-  // If tab was previously tracked as Glance but no longer has markers, remove it
-  if (glanceTabIds.has(tab.id) && !hasCurrentGlanceMarkers) {
-    console.log('❌ Tab no longer has Glance markers, removing from tracking:', tab.id);
-    glanceTabIds.delete(tab.id);
+  if (isSplitViewTab(tab)) {
+    if (glanceTabIds.delete(tab.id)) {
+      console.debug('Split-view tab removed from Glance tracking:', tab.id);
+    }
     return false;
   }
 
-  // If tab has current markers, add to tracking
-  if (hasCurrentGlanceMarkers) {
-    console.log('✅ Tab identified as Glance, adding to tracking:', tab.id);
+  if (glanceTabIds.has(tab.id)) {
+    return true;
+  }
+
+  const win = await browser.windows.get(tab.windowId);
+  const widthRatio = tab.width && win.width ? tab.width / win.width : 1;
+  const heightRatio = tab.height && win.height ? tab.height / win.height : 1;
+
+  const looksLikeGlance = widthRatio < 0.75 || heightRatio < 0.85;
+
+  if (looksLikeGlance) {
     glanceTabIds.add(tab.id);
     return true;
   }
 
-  console.log('❌ Tab is NOT a Glance tab:', tab.id);
-  console.log('=================================\n');
+  glanceTabIds.delete(tab.id);
   return false;
 }
 
@@ -204,7 +156,7 @@ const isBookmarkedTab = (tab) => {
 };
 
 // Update stored original title when tab URL or title changes naturally
-browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+browser.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   console.log('Tab updated:', tabId, 'changeInfo:', changeInfo);
   
   // If title changed and doesn't have emoji prefix, update stored original
@@ -216,9 +168,7 @@ browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   }
   
   // Check if this is a Glance tab (this will also update tracking)
-  const isGlance = isGlanceTab(tab);
-  
-  // IMPORTANT: Don't trigger auto-tidy if the updated tab is a Glance tab
+  const isGlance = await isGlanceTab(tab);
   if (isGlance) {
     console.debug('⏭️ Skipping auto-tidy: tab is a Glance tab', tab.id);
     return;
@@ -245,16 +195,13 @@ browser.tabs.onRemoved.addListener((tabId) => {
 
 // Listen for when tabs are attached/detached (moved between windows)
 // This can happen when a Glance tab becomes a regular tab
-browser.tabs.onAttached.addListener((tabId, attachInfo) => {
-  // When a tab is attached to a new window, re-check if it's still a Glance tab
-  browser.tabs.get(tabId).then(tab => {
-    // isGlanceTab will automatically update tracking based on current markers
-    const stillGlance = isGlanceTab(tab);
-    if (!stillGlance) {
-      console.debug('Tab promoted from Glance during attach, triggering tidy:', tabId);
-      maybeAutoTidy();
-    }
-  });
+browser.tabs.onAttached.addListener(async (tabId) => {
+  const tab = await browser.tabs.get(tabId);
+  const stillGlance = await isGlanceTab(tab);
+  if (!stillGlance) {
+    console.debug('Tab promoted from Glance during attach, triggering tidy:', tabId);
+    maybeAutoTidy();
+  }
 });
 
 // Helper: only operate on normal browser windows (avoid Glance/popup/devtools)
@@ -299,6 +246,11 @@ async function tidy() {
     windowId: currentWindow.id
   });
 
+  const glanceEntries = await Promise.all(
+    tabs.map(async (tab) => [tab.id, await isGlanceTab(tab)])
+  );
+  const glanceLookup = new Map(glanceEntries);
+
   // DEBUG: Log all tabs to see their properties
   console.log('=== ALL TABS IN WINDOW ===');
   tabs.forEach(tab => {
@@ -322,11 +274,11 @@ async function tidy() {
   // Separate tabs into categories
   const pinnedTabs = tabs.filter(tab => tab.pinned);
   const bookmarkedTabs = tabs.filter(tab => !tab.pinned && isBookmarkedTab(tab));
-  const glanceTabs = tabs.filter(tab => !tab.pinned && !isBookmarkedTab(tab) && isGlanceTab(tab));
-  const regularTabs = tabs.filter(tab => 
-    !tab.pinned && 
-    !isBookmarkedTab(tab) && 
-    !isGlanceTab(tab)
+  const glanceTabs = tabs.filter(tab =>
+    !tab.pinned && !isBookmarkedTab(tab) && glanceLookup.get(tab.id)
+  );
+  const regularTabs = tabs.filter(tab =>
+    !tab.pinned && !isBookmarkedTab(tab) && !glanceLookup.get(tab.id)
   );
   
   console.log('Tab categories:', {
