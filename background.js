@@ -117,7 +117,20 @@ browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     }
   }
   
-  // Only trigger auto-tidy on URL or title changes
+  // IMPORTANT: Don't trigger auto-tidy if the updated tab is a Glance tab
+  // This prevents tidy from running when Glance tabs are loading
+  if (isGlanceTab(tab)) {
+    console.debug('Skipping auto-tidy: tab is a Glance tab', tab.id);
+    return;
+  }
+  
+  // Don't trigger auto-tidy if the updated tab is bookmarked
+  if (isBookmarkedTab(tab)) {
+    console.debug('Skipping auto-tidy: tab is a bookmarked tab', tab.id);
+    return;
+  }
+  
+  // Only trigger auto-tidy on URL or title changes (and only for regular tabs)
   if (changeInfo.url || changeInfo.title) {
     maybeAutoTidy();
   }
