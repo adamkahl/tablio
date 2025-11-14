@@ -112,64 +112,80 @@ async function renameTab(tabId, title) {
 
 // Helper: Check if a tab is a Zen Browser Glance tab
 function isGlanceTab(tab) {
-  // If we've already marked this tab as a Glance tab, keep treating it as one
-  if (glanceTabIds.has(tab.id)) {
-    return true;
+  // Log ALL properties of the tab for debugging
+  console.log('=== GLANCE TAB DETECTION DEBUG ===');
+  console.log('Tab ID:', tab.id);
+  console.log('Tab properties:', {
+    id: tab.id,
+    index: tab.index,
+    windowId: tab.windowId,
+    highlighted: tab.highlighted,
+    active: tab.active,
+    pinned: tab.pinned,
+    status: tab.status,
+    incognito: tab.incognito,
+    width: tab.width,
+    height: tab.height,
+    discarded: tab.discarded,
+    autoDiscardable: tab.autoDiscardable,
+    mutedInfo: tab.mutedInfo,
+    url: tab.url,
+    title: tab.title,
+    favIconUrl: tab.favIconUrl,
+    pendingUrl: tab.pendingUrl,
+    sessionId: tab.sessionId,
+    // Zen-specific properties
+    hidden: tab.hidden,
+    skipTabGroups: tab.skipTabGroups,
+    isInZenSidebar: tab.isInZenSidebar,
+    cookieStoreId: tab.cookieStoreId,
+    // Any other properties
+    ...Object.keys(tab).reduce((acc, key) => {
+      if (!['id', 'index', 'windowId', 'highlighted', 'active', 'pinned', 'status', 
+            'incognito', 'width', 'height', 'discarded', 'autoDiscardable', 'mutedInfo',
+            'url', 'title', 'favIconUrl', 'pendingUrl', 'sessionId', 'hidden', 
+            'skipTabGroups', 'isInZenSidebar', 'cookieStoreId'].includes(key)) {
+        acc[key] = tab[key];
+      }
+      return acc;
+    }, {})
+  });
+
+  // First check if this tab has any current Glance markers
+  const checks = {
+    skipTabGroups: tab.skipTabGroups === true,
+    isInZenSidebar: tab.isInZenSidebar === true,
+    hidden: tab.hidden === true,
+    cookieStoreIdGlance: tab.cookieStoreId && tab.cookieStoreId.includes('zen-glance'),
+    cookieStoreIdSidebar: tab.cookieStoreId && tab.cookieStoreId.includes('zen-sidebar'),
+    urlAboutBlank: tab.url && tab.url.startsWith('about:blank'),
+    urlZen: tab.url && tab.url.startsWith('zen://'),
+    urlChrome: tab.url && tab.url.startsWith('chrome://'),
+    loadingNewTab: tab.status === 'loading' && (!tab.title || tab.title === 'New Tab')
+  };
+
+  console.log('Glance detection checks:', checks);
+
+  const hasCurrentGlanceMarkers = Object.values(checks).some(v => v);
+  console.log('Has current Glance markers:', hasCurrentGlanceMarkers);
+  console.log('Previously tracked as Glance:', glanceTabIds.has(tab.id));
+
+  // If tab was previously tracked as Glance but no longer has markers, remove it
+  if (glanceTabIds.has(tab.id) && !hasCurrentGlanceMarkers) {
+    console.log('❌ Tab no longer has Glance markers, removing from tracking:', tab.id);
+    glanceTabIds.delete(tab.id);
+    return false;
   }
-  
-  // Zen Browser marks Glance tabs with specific properties
-  
-  // Method 1: Check for Zen-specific markers
-  if (tab.skipTabGroups === true) {
+
+  // If tab has current markers, add to tracking
+  if (hasCurrentGlanceMarkers) {
+    console.log('✅ Tab identified as Glance, adding to tracking:', tab.id);
     glanceTabIds.add(tab.id);
     return true;
   }
-  if (tab.isInZenSidebar === true) {
-    glanceTabIds.add(tab.id);
-    return true;
-  }
-  if (tab.hidden === true) { // Glance tabs are often hidden
-    glanceTabIds.add(tab.id);
-    return true;
-  }
-  
-  // Method 2: Check cookie store container
-  if (tab.cookieStoreId) {
-    if (tab.cookieStoreId.includes('zen-glance')) {
-      glanceTabIds.add(tab.id);
-      return true;
-    }
-    if (tab.cookieStoreId.includes('zen-sidebar')) {
-      glanceTabIds.add(tab.id);
-      return true;
-    }
-  }
-  
-  // Method 3: Check for split-view Glance tabs by URL pattern
-  // Glance tabs often load about:blank or special Zen URLs
-  if (tab.url) {
-    if (tab.url.startsWith('about:blank')) {
-      glanceTabIds.add(tab.id);
-      return true;
-    }
-    if (tab.url.startsWith('zen://')) {
-      glanceTabIds.add(tab.id);
-      return true;
-    }
-    if (tab.url.startsWith('chrome://')) {
-      glanceTabIds.add(tab.id);
-      return true;
-    }
-  }
-  
-  // Method 4: Check tab properties that indicate it's a Glance preview
-  // Glance tabs typically have very low IDs relative to other tabs in split view
-  // and may not have a title yet
-  if (tab.status === 'loading' && (!tab.title || tab.title === 'New Tab')) {
-    glanceTabIds.add(tab.id);
-    return true;
-  }
-  
+
+  console.log('❌ Tab is NOT a Glance tab:', tab.id);
+  console.log('=================================\n');
   return false;
 }
 
@@ -189,6 +205,8 @@ const isBookmarkedTab = (tab) => {
 
 // Update stored original title when tab URL or title changes naturally
 browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  console.log('Tab updated:', tabId, 'changeInfo:', changeInfo);
+  
   // If title changed and doesn't have emoji prefix, update stored original
   if (changeInfo.title) {
     const hasEmojiPrefix = /^[\p{Emoji}\s]+/u.test(changeInfo.title);
@@ -197,21 +215,24 @@ browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     }
   }
   
+  // Check if this is a Glance tab (this will also update tracking)
+  const isGlance = isGlanceTab(tab);
+  
   // IMPORTANT: Don't trigger auto-tidy if the updated tab is a Glance tab
-  // This prevents tidy from running when Glance tabs are loading
-  if (isGlanceTab(tab)) {
-    console.debug('Skipping auto-tidy: tab is a Glance tab', tab.id);
+  if (isGlance) {
+    console.debug('⏭️ Skipping auto-tidy: tab is a Glance tab', tab.id);
     return;
   }
   
   // Don't trigger auto-tidy if the updated tab is bookmarked
   if (isBookmarkedTab(tab)) {
-    console.debug('Skipping auto-tidy: tab is a bookmarked tab', tab.id);
+    console.debug('⏭️ Skipping auto-tidy: tab is a bookmarked tab', tab.id);
     return;
   }
   
   // Only trigger auto-tidy on URL or title changes (and only for regular tabs)
   if (changeInfo.url || changeInfo.title) {
+    console.debug('✅ Triggering auto-tidy due to tab update');
     maybeAutoTidy();
   }
 });
@@ -225,13 +246,12 @@ browser.tabs.onRemoved.addListener((tabId) => {
 // Listen for when tabs are attached/detached (moved between windows)
 // This can happen when a Glance tab becomes a regular tab
 browser.tabs.onAttached.addListener((tabId, attachInfo) => {
-  // When a tab is attached to a new window, check if it was a Glance tab
-  // If it's being moved to a normal window at a high index, it's likely being promoted
+  // When a tab is attached to a new window, re-check if it's still a Glance tab
   browser.tabs.get(tabId).then(tab => {
-    // If it's no longer at a low index and doesn't have Glance markers, remove from tracking
-    if (!tab.pinned && !tab.skipTabGroups && !tab.isInZenSidebar && !tab.hidden) {
-      console.debug('Tab promoted from Glance, removing from tracking:', tabId);
-      glanceTabIds.delete(tabId);
+    // isGlanceTab will automatically update tracking based on current markers
+    const stillGlance = isGlanceTab(tab);
+    if (!stillGlance) {
+      console.debug('Tab promoted from Glance during attach, triggering tidy:', tabId);
       maybeAutoTidy();
     }
   });
@@ -261,8 +281,15 @@ async function getFocusedNormalWindow() {
 
 // Main action: rename tabs based on pairings and organize by groups
 async function tidy() {
+  console.log('=== TIDY OPERATION STARTED ===');
+  
   const currentWindow = await getFocusedNormalWindow();
-  if (!currentWindow) return;
+  if (!currentWindow) {
+    console.log('❌ No valid window found, aborting tidy');
+    return;
+  }
+
+  console.log('✅ Operating on window:', currentWindow.id);
 
   const [{ pairings, groups }] = await Promise.all([
     browser.storage.local.get({ pairings: [], groups: [] })
@@ -273,20 +300,24 @@ async function tidy() {
   });
 
   // DEBUG: Log all tabs to see their properties
-  console.log('All tabs in window:', tabs.map(t => ({
-    id: t.id,
-    index: t.index,
-    title: t.title,
-    url: t.url,
-    pinned: t.pinned,
-    hidden: t.hidden,
-    skipTabGroups: t.skipTabGroups,
-    isInZenSidebar: t.isInZenSidebar,
-    cookieStoreId: t.cookieStoreId,
-    status: t.status,
-    discarded: t.discarded,
-    isTrackedGlance: glanceTabIds.has(t.id)
-  })));
+  console.log('=== ALL TABS IN WINDOW ===');
+  tabs.forEach(tab => {
+    console.log(`Tab ${tab.id} (index ${tab.index}):`, {
+      title: tab.title,
+      url: tab.url,
+      pinned: tab.pinned,
+      hidden: tab.hidden,
+      skipTabGroups: tab.skipTabGroups,
+      isInZenSidebar: tab.isInZenSidebar,
+      cookieStoreId: tab.cookieStoreId,
+      status: tab.status,
+      discarded: tab.discarded,
+      isTrackedGlance: glanceTabIds.has(tab.id),
+      active: tab.active,
+      highlighted: tab.highlighted
+    });
+  });
+  console.log('========================\n');
 
   // Separate tabs into categories
   const pinnedTabs = tabs.filter(tab => tab.pinned);
