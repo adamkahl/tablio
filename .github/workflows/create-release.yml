@@ -14,6 +14,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.ACTIONS_PAT }}
 
       - name: Check version validity
         id: check_version
@@ -57,7 +59,7 @@ jobs:
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v6
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.ACTIONS_PAT }}
           commit-message: "Bump version to ${{ github.event.inputs.version }}"
           branch: ${{ steps.create_branch.outputs.branch }}
           title: "Bump version to ${{ github.event.inputs.version }}"
