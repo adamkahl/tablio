@@ -14,6 +14,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.ACTIONS_PAT }}
 
       - name: Get version from manifest
         id: get_version
@@ -36,15 +38,19 @@ jobs:
           echo "chrome_zip=$CHROME_ZIP" >> $GITHUB_OUTPUT
 
       - name: Create Git tag
+        env:
+          ACTIONS_PAT: ${{ secrets.ACTIONS_PAT }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin https://x-access-token:${ACTIONS_PAT}@github.com/adamkahl/tablio.git
           git tag "v${{ steps.get_version.outputs.version }}"
           git push origin "v${{ steps.get_version.outputs.version }}"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          token: ${{ secrets.ACTIONS_PAT }}
           tag_name: v${{ steps.get_version.outputs.version }}
           name: "Tablio v${{ steps.get_version.outputs.version }}"
           body: |
