@@ -1,4 +1,4 @@
-name: Create Release
+name: Create Version Bump PR
 
 on:
   workflow_dispatch:
@@ -9,16 +9,11 @@ on:
         type: string
 
 jobs:
-  release:
+  version-bump-pr:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Set up Node.js (for shell tools if needed)
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
 
       - name: Check version validity
         id: check_version
@@ -30,13 +25,20 @@ jobs:
             exit 1
           fi
           CURRENT_VERSION=$(grep -m1 '"version"' manifest-firefox.json | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"(.*)".*/\1/')
-          # Compare versions
           ver() { printf "%03d%03d%03d" $(echo "$1" | tr '.' ' '); }
           if [ "$(ver "$INPUT_VERSION")" -le "$(ver "$CURRENT_VERSION")" ]; then
             echo "Input version ($INPUT_VERSION) is not greater than current version ($CURRENT_VERSION)"
             exit 1
           fi
           echo "version=$INPUT_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Create version bump branch
+        id: create_branch
+        run: |
+          VERSION=${{ github.event.inputs.version }}
+          BRANCH="bump-version-v$VERSION"
+          git checkout -b "$BRANCH"
+          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
 
       - name: Update manifest versions
         run: |
@@ -50,38 +52,13 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add manifest-firefox.json manifest-chrome.json
           git commit -m "Bump version to ${{ github.event.inputs.version }}"
-          git push
+          git push origin HEAD:${{ steps.create_branch.outputs.branch }}
 
-      - name: Build zips
-        run: |
-          chmod +x ./create_dist.sh
-          ./create_dist.sh
-
-      - name: Get release artifacts
-        id: artifacts
-        run: |
-          VERSION="${{ github.event.inputs.version }}"
-          FIREFOX_ZIP=$(ls dist/*firefox-v${VERSION}.zip)
-          CHROME_ZIP=$(ls dist/*chrome-v${VERSION}.zip)
-          echo "firefox_zip=$FIREFOX_ZIP" >> $GITHUB_OUTPUT
-          echo "chrome_zip=$CHROME_ZIP" >> $GITHUB_OUTPUT
-
-      - name: Create Git tag
-        run: |
-          git tag "v${{ github.event.inputs.version }}"
-          git push origin "v${{ github.event.inputs.version }}"
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
         with:
-          tag_name: v${{ github.event.inputs.version }}
-          name: "Tablio v${{ github.event.inputs.version }}"
-          body: |
-            Automated release for version ${{ github.event.inputs.version }}.
-          draft: false
-          prerelease: false
-          files: |
-            ${{ steps.artifacts.outputs.firefox_zip }}
-            ${{ steps.artifacts.outputs.chrome_zip }}
-            LICENSE
-            README.md
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "Bump version to ${{ github.event.inputs.version }}"
+          branch: ${{ steps.create_branch.outputs.branch }}
+          title: "Bump version to ${{ github.event.inputs.version }}"
+          body: "Automated version bump to ${{ github.event.inputs.version }}. Merging this PR will trigger the release."

@@ -1,0 +1,58 @@
+name: Release on Version Bump
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'manifest-firefox.json'
+      - 'manifest-chrome.json'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get version from manifest
+        id: get_version
+        run: |
+          VERSION=$(grep -m1 '"version"' manifest-firefox.json | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"(.*)".*/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Build zips
+        run: |
+          chmod +x ./create_dist.sh
+          ./create_dist.sh
+
+      - name: Get release artifacts
+        id: artifacts
+        run: |
+          VERSION="${{ steps.get_version.outputs.version }}"
+          FIREFOX_ZIP=$(ls dist/*firefox-v${VERSION}.zip)
+          CHROME_ZIP=$(ls dist/*chrome-v${VERSION}.zip)
+          echo "firefox_zip=$FIREFOX_ZIP" >> $GITHUB_OUTPUT
+          echo "chrome_zip=$CHROME_ZIP" >> $GITHUB_OUTPUT
+
+      - name: Create Git tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "v${{ steps.get_version.outputs.version }}"
+          git push origin "v${{ steps.get_version.outputs.version }}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.get_version.outputs.version }}
+          name: "Tablio v${{ steps.get_version.outputs.version }}"
+          body: |
+            Automated release for version ${{ steps.get_version.outputs.version }}.
+          draft: false
+          prerelease: false
+          files: |
+            ${{ steps.artifacts.outputs.firefox_zip }}
+            ${{ steps.artifacts.outputs.chrome_zip }}
+            LICENSE
+            README.md
