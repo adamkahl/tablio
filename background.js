@@ -122,28 +122,36 @@ function findGroup(groups, groupName) {
 
 // Calculate match score for a tab against a group's keywords
 function calculateMatchScore(tab, keywords) {
-  if (!keywords || keywords.length === 0) return 0;
+  if (!keywords || keywords.length === 0) {
+    return { score: 0, longestMatchedKeywordLength: 0 };
+  }
   
   const searchText = `${tab.url} ${tab.title}`.toLowerCase();
   let score = 0;
+  let longestMatchedKeywordLength = 0;
   
   keywords.forEach(keyword => {
-    const lowerKeyword = keyword.toLowerCase();
+    const lowerKeyword = (keyword || '').toLowerCase().trim();
+    if (!lowerKeyword) return;
+
     if (searchText.includes(lowerKeyword)) {
       // Give more weight to exact matches and matches in URL
-      const urlMatches = (tab.url.toLowerCase().match(new RegExp(lowerKeyword, 'g')) || []).length;
-      const titleMatches = (tab.title.toLowerCase().match(new RegExp(lowerKeyword, 'g')) || []).length;
+      const escapedKeyword = escapeRegExp(lowerKeyword);
+      const urlMatches = (tab.url.toLowerCase().match(new RegExp(escapedKeyword, 'g')) || []).length;
+      const titleMatches = (tab.title.toLowerCase().match(new RegExp(escapedKeyword, 'g')) || []).length;
       score += (urlMatches * 2) + titleMatches; // URL matches count double
+      longestMatchedKeywordLength = Math.max(longestMatchedKeywordLength, lowerKeyword.length);
     }
   });
   
-  return score;
+  return { score, longestMatchedKeywordLength };
 }
 
 // Find best matching group for a tab based on keywords
 function findBestMatchingGroup(groups, tab) {
   let bestMatch = null;
   let bestScore = 0;
+  let bestLongestMatchedKeywordLength = 0;
   
   groups.forEach(group => {
     if (typeof group === 'string') return; // Skip old format groups
@@ -151,9 +159,13 @@ function findBestMatchingGroup(groups, tab) {
     const keywords = group.keywords || [];
     if (keywords.length === 0) return; // Skip groups without keywords
     
-    const score = calculateMatchScore(tab, keywords);
-    if (score > bestScore) {
+    const { score, longestMatchedKeywordLength } = calculateMatchScore(tab, keywords);
+    if (
+      score > bestScore ||
+      (score === bestScore && longestMatchedKeywordLength > bestLongestMatchedKeywordLength)
+    ) {
       bestScore = score;
+      bestLongestMatchedKeywordLength = longestMatchedKeywordLength;
       bestMatch = group;
     }
   });
