@@ -8,6 +8,7 @@ const originalTitles = new Map();
 
 // Debounce timer for auto-tidy
 let autoTidyTimeout = null;
+let tabGroupsUnsupportedLogged = false;
 
 const TAB_GROUP_COLORS = ['blue', 'green', 'yellow', 'orange', 'red', 'purple', 'pink', 'cyan', 'grey'];
 
@@ -30,7 +31,13 @@ function getGroupColor(groupName, groupOrderMap) {
 }
 
 async function autoGroupTabs(windowId, tabsWithGroups, groups) {
-  if (!supportsTabGroupsApi()) return;
+  if (!supportsTabGroupsApi()) {
+    if (!tabGroupsUnsupportedLogged) {
+      console.debug('Automatic tab grouping skipped: tabGroups API is unavailable in this browser.');
+      tabGroupsUnsupportedLogged = true;
+    }
+    return;
+  }
 
   const groupedTabIds = new Map();
   const ungroupedTabIds = [];

@@ -25,11 +25,26 @@ if (typeof browser === 'undefined') {
   globalThis.browser = chrome;
 }
 
+function supportsTabGroupsApi() {
+  return !!(browser?.tabs?.group && browser?.tabGroups?.update && browser?.tabGroups?.query);
+}
+
 // Load settings
 async function loadSettings() {
   const { autoTidyEnabled, autoGroupTabsEnabled } = await browser.storage.local.get({ autoTidyEnabled: false, autoGroupTabsEnabled: true });
+  const groupToggle = document.getElementById('auto-group-tabs-toggle');
+  const groupDesc = document.getElementById('auto-group-tabs-description');
+  const tabGroupsSupported = supportsTabGroupsApi();
+
   document.getElementById('auto-tidy-toggle').checked = autoTidyEnabled;
-  document.getElementById('auto-group-tabs-toggle').checked = autoGroupTabsEnabled;
+  groupToggle.checked = tabGroupsSupported && autoGroupTabsEnabled;
+  groupToggle.disabled = !tabGroupsSupported;
+
+  if (groupDesc) {
+    groupDesc.textContent = tabGroupsSupported
+      ? 'Automatically create browser tab groups based on your configured Groups'
+      : 'Your browser does not support extension-controlled tab groups';
+  }
 }
 
 function handleSearch(query) {
@@ -50,6 +65,11 @@ document.getElementById('auto-tidy-toggle').addEventListener('change', async (e)
 });
 
 document.getElementById('auto-group-tabs-toggle').addEventListener('change', async (e) => {
+  if (!supportsTabGroupsApi()) {
+    e.target.checked = false;
+    showStatus('Tab groups are not supported in this browser');
+    return;
+  }
   const autoGroupTabsEnabled = e.target.checked;
   await browser.storage.local.set({ autoGroupTabsEnabled });
   showStatus(autoGroupTabsEnabled ? 'Automatic tab grouping enabled' : 'Automatic tab grouping disabled');
