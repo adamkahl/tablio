@@ -93,8 +93,8 @@ export async function loadRecommendedDefaults(browser, loadGroups, loadPairings,
       autoGroupTabsEnabled: importData.autoGroupTabsEnabled ?? true
     });
 
-    await loadGroups(browser);  // Add browser parameter
-    await loadPairings(browser);  // Add browser parameter
+    await loadGroups(browser, loadPairings);
+    await loadPairings();
     await loadSettings();
     showStatus('Recommended defaults loaded');
   } catch (error) {
@@ -129,8 +129,8 @@ export async function importSettings(file, browser, loadGroups, loadPairings, lo
       autoGroupTabsEnabled: importData.autoGroupTabsEnabled ?? true
     });
     
-    await loadGroups(browser);  // Add browser parameter
-    await loadPairings(browser);  // Add browser parameter
+    await loadGroups(browser, loadPairings);
+    await loadPairings();
     await loadSettings();
     
     showStatus('Settings imported successfully');
@@ -158,8 +158,8 @@ export async function clearAllSettings(browser, loadGroups, loadPairings, loadSe
     autoGroupTabsEnabled: true
   });
 
-  await loadGroups(browser);  // Add browser parameter
-  await loadPairings(browser);  // Add browser parameter
+  await loadGroups(browser, loadPairings);
+  await loadPairings();
   await loadSettings();
   showStatus('All settings cleared');
 }
@@ -178,7 +178,7 @@ export async function reorderGroups(fromIndex, toIndex, browser, loadGroups) {
   groups.splice(clampedTo, 0, item);
 
   await browser.storage.local.set({ groups });
-  await loadGroups(browser); // Pass browser parameter
+  await loadGroups(browser, loadPairings);
   showStatus('Saved');
 }
 
