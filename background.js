@@ -303,6 +303,15 @@ function isBlankOrNewTab(tab) {
   );
 }
 
+function isStartOrNewPageUrl(tab) {
+  const url = ((tab?.pendingUrl || tab?.url || '') + '').toLowerCase();
+  return (
+    url.includes('newtab') ||
+    url.includes('startpage') ||
+    url === 'about:blank'
+  );
+}
+
 // Main action: rename tabs based on pairings and organize by groups
 async function tidy() {
   console.log('=== TIDY OPERATION STARTED ===');
@@ -415,6 +424,20 @@ async function tidy() {
     };
   });
 
+  const debugTargets = tabsWithGroups.filter(item => isStartOrNewPageUrl(item.tab));
+  if (debugTargets.length > 0) {
+    console.debug('[tablio-sort] start/new tab inputs:', debugTargets.map(item => ({
+      tabId: item.tab.id,
+      url: item.tab.pendingUrl || item.tab.url || '',
+      title: item.tab.title || '',
+      isNewOrBlank: item.isNewOrBlank,
+      matchedGroup: item.group || '(none)',
+      groupOrder: item.groupOrder,
+      pairingOrder: item.pairingOrder,
+      hasPairing: !!item.pairing
+    })));
+  }
+
   // Sort tabs: new/blank tabs last, then group order, URL pattern order, then alphabetically
   tabsWithGroups.sort((a, b) => {
     // Keep blank/new tabs at the end
@@ -435,6 +458,26 @@ async function tidy() {
     // Fallback sort alphabetically by display title
     return a.displayTitle.toLowerCase().localeCompare(b.displayTitle.toLowerCase());
   });
+
+  if (debugTargets.length > 0) {
+    const sortedDebug = tabsWithGroups
+      .map((item, index) => ({ index, item }))
+      .filter(entry => isStartOrNewPageUrl(entry.item.tab))
+      .map(entry => ({
+        finalIndex: entry.index,
+        tabId: entry.item.tab.id,
+        url: entry.item.tab.pendingUrl || entry.item.tab.url || '',
+        title: entry.item.tab.title || '',
+        reason: entry.item.isNewOrBlank
+          ? 'Pushed to end by isNewOrBlank rule'
+          : 'Placed by group/pattern/title ordering',
+        matchedGroup: entry.item.group || '(none)',
+        groupOrder: entry.item.groupOrder,
+        pairingOrder: entry.item.pairingOrder
+      }));
+
+    console.debug('[tablio-sort] start/new tab outputs:', sortedDebug);
+  }
 
   // Rename tabs that match pairings (only if they have a name)
   await Promise.allSettled(
