@@ -288,6 +288,21 @@ async function getFocusedNormalWindow() {
   return win;
 }
 
+function isBlankOrNewTab(tab) {
+  const url = ((tab?.pendingUrl || tab?.url || '') + '').toLowerCase();
+  if (!url) return true;
+
+  return (
+    url === 'about:blank' ||
+    url.startsWith('about:newtab') ||
+    url.startsWith('chrome://newtab') ||
+    url.startsWith('chrome-search://local-ntp') ||
+    url.startsWith('edge://newtab') ||
+    url.startsWith('vivaldi://startpage') ||
+    url.startsWith('vivaldi://newtab')
+  );
+}
+
 // Main action: rename tabs based on pairings and organize by groups
 async function tidy() {
   console.log('=== TIDY OPERATION STARTED ===');
@@ -386,6 +401,7 @@ async function tidy() {
     // Get group order (ungrouped tabs go to end)
     const groupOrder = groupName ? (groupOrderMap.get(groupName) ?? groups.length) : groups.length;
     const pairingOrder = pairing ? (pairingOrderMap.get(pairing) ?? Number.MAX_SAFE_INTEGER) : Number.MAX_SAFE_INTEGER;
+    const isNewOrBlank = isBlankOrNewTab(tab);
     
     return {
       tab,
@@ -394,12 +410,18 @@ async function tidy() {
       displayTitle,
       groupOrder,
       pairingOrder,
+      isNewOrBlank,
       shouldRename: shouldModifyTitle
     };
   });
 
-  // Sort tabs: first by group order, then URL pattern order, then alphabetically
+  // Sort tabs: new/blank tabs last, then group order, URL pattern order, then alphabetically
   tabsWithGroups.sort((a, b) => {
+    // Keep blank/new tabs at the end
+    if (a.isNewOrBlank !== b.isNewOrBlank) {
+      return a.isNewOrBlank ? 1 : -1;
+    }
+
     // First, sort by group order
     if (a.groupOrder !== b.groupOrder) {
       return a.groupOrder - b.groupOrder;
