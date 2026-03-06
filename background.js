@@ -303,15 +303,6 @@ function isBlankOrNewTab(tab) {
   );
 }
 
-function isStartOrNewPageUrl(tab) {
-  const url = ((tab?.pendingUrl || tab?.url || '') + '').toLowerCase();
-  return (
-    url.includes('newtab') ||
-    url.includes('startpage') ||
-    url === 'about:blank'
-  );
-}
-
 // Main action: rename tabs based on pairings and organize by groups
 async function tidy() {
   console.log('=== TIDY OPERATION STARTED ===');
@@ -424,19 +415,7 @@ async function tidy() {
     };
   });
 
-  const debugTargets = tabsWithGroups.filter(item => isStartOrNewPageUrl(item.tab));
-  if (debugTargets.length > 0) {
-    console.debug('[tablio-sort] start/new tab inputs:', debugTargets.map(item => ({
-      tabId: item.tab.id,
-      url: item.tab.pendingUrl || item.tab.url || '',
-      title: item.tab.title || '',
-      isNewOrBlank: item.isNewOrBlank,
-      matchedGroup: item.group || '(none)',
-      groupOrder: item.groupOrder,
-      pairingOrder: item.pairingOrder,
-      hasPairing: !!item.pairing
-    })));
-  }
+  const regularById = new Map(tabsWithGroups.map(item => [item.tab.id, item]));
 
   // Sort tabs: new/blank tabs last, then group order, URL pattern order, then alphabetically
   tabsWithGroups.sort((a, b) => {
@@ -459,25 +438,53 @@ async function tidy() {
     return a.displayTitle.toLowerCase().localeCompare(b.displayTitle.toLowerCase());
   });
 
-  if (debugTargets.length > 0) {
-    const sortedDebug = tabsWithGroups
-      .map((item, index) => ({ index, item }))
-      .filter(entry => isStartOrNewPageUrl(entry.item.tab))
-      .map(entry => ({
-        finalIndex: entry.index,
-        tabId: entry.item.tab.id,
-        url: entry.item.tab.pendingUrl || entry.item.tab.url || '',
-        title: entry.item.tab.title || '',
-        reason: entry.item.isNewOrBlank
-          ? 'Pushed to end by isNewOrBlank rule'
-          : 'Placed by group/pattern/title ordering',
-        matchedGroup: entry.item.group || '(none)',
-        groupOrder: entry.item.groupOrder,
-        pairingOrder: entry.item.pairingOrder
-      }));
+  const finalRegularPosition = new Map(tabsWithGroups.map((item, index) => [item.tab.id, index]));
+  const tabDiagnostics = tabs.map(tab => {
+    const category = tab.pinned
+      ? 'pinned'
+      : isBookmarkedTab(tab)
+        ? 'bookmarked'
+        : 'regular';
 
-    console.debug('[tablio-sort] start/new tab outputs:', sortedDebug);
-  }
+    const regularMeta = regularById.get(tab.id);
+    const finalPosition = finalRegularPosition.has(tab.id) ? finalRegularPosition.get(tab.id) : null;
+    const url = tab.pendingUrl || tab.url || '';
+
+    return {
+      tabId: tab.id,
+      title: tab.title || '',
+      url,
+      pendingUrl: tab.pendingUrl || '',
+      browserIndex: tab.index,
+      category,
+      isNewOrBlank: regularMeta ? regularMeta.isNewOrBlank : isBlankOrNewTab(tab),
+      matchedPairingUrl: regularMeta?.pairing?.url || null,
+      matchedGroup: regularMeta?.group || null,
+      groupOrder: regularMeta?.groupOrder ?? null,
+      pairingOrder: regularMeta?.pairingOrder ?? null,
+      finalRegularPosition: finalPosition,
+      sortReason: category !== 'regular'
+        ? 'Immovable (pinned/bookmarked)'
+        : regularMeta?.isNewOrBlank
+          ? 'Regular tab pushed to end by isNewOrBlank rule'
+          : 'Regular tab sorted by groupOrder -> pairingOrder -> displayTitle',
+      willMove: category === 'regular' && finalPosition !== null,
+      targetMoveIndex: category === 'regular' && finalPosition !== null ? safeStartIndex + finalPosition : null
+    };
+  });
+
+  console.groupCollapsed('[tablio-sort] Tab diagnostics');
+  console.log({
+    windowId: currentWindow.id,
+    safeStartIndex,
+    counts: {
+      pinned: pinnedTabs.length,
+      bookmarked: bookmarkedTabs.length,
+      regular: regularTabs.length
+    },
+    tabs: tabDiagnostics
+  });
+  console.groupEnd();
 
   // Rename tabs that match pairings (only if they have a name)
   await Promise.allSettled(
