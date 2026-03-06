@@ -6,115 +6,72 @@ if (typeof browser === 'undefined') {
 // Store original tab titles to prevent duplicate emoji prepending
 const originalTitles = new Map();
 
-// Track tabs that were detected as Glance tabs
-const glanceTabIds = new Set();
-const isSplitViewTab = (tab) => typeof tab?.groupId === 'number' && tab.groupId !== -1;
-
-// Track which tabs were opened from pinned sources
-const pinnedTabIds = new Set();
-
 // Debounce timer for auto-tidy
 let autoTidyTimeout = null;
 
-// Grace period (ms) to auto-clear a tab from glanceTabIds; 0 disables
-let glanceGraceMs = 0;
-const glanceClearTimers = new Map();
-const glanceTabWindow = new Map();
-// Lock to prevent tidy for windows where a Glance was just detected; avoids race
-const windowGlanceLocks = new Map();
-const GLANCE_DETECT_LOCK_MS = 500; // ms to lock tidy when detecting Glance
+const TAB_GROUP_COLORS = ['blue', 'green', 'yellow', 'orange', 'red', 'purple', 'pink', 'cyan', 'grey'];
 
-const GLANCE_WIDTH_RATIO_MAX = 0.85;
-const GLANCE_WIDTH_DELTA_MIN = 300; // px difference between window and tab
-const GLANCE_CLEAR_RATIO = 0.92;
-const GLANCE_CLEAR_DELTA = 400;
-
-// Initialize glanceGraceMs from storage
-(async function initGlanceGraceFromStorage() {
-  try {
-    const { glanceGraceMs: ms = 0 } = await browser.storage.local.get({ glanceGraceMs: 0 });
-    glanceGraceMs = ms;
-  } catch (_) {
-    glanceGraceMs = 0;
-  }
-})();
-
-// Keep storage changes in sync (e.g., set by popup)
-browser.storage.onChanged.addListener((changes, area) => {
-  if (area !== 'local') return;
-  if (changes.glanceGraceMs) {
-    setGlanceGraceMs(changes.glanceGraceMs.newValue || 0);
-  }
-});
-
-function scheduleGlanceClear(tabId, windowId = null) {
-  // Cancel any existing schedule first
-  if (glanceClearTimers.has(tabId)) {
-    clearTimeout(glanceClearTimers.get(tabId));
-    glanceClearTimers.delete(tabId);
-  }
-  if (!glanceGraceMs || glanceGraceMs <= 0) return;
-  const t = setTimeout(() => {
-    glanceTabIds.delete(tabId);
-    glanceClearTimers.delete(tabId);
-    console.debug('[glance] auto-cleared tab from set:', tabId);
-    maybeAutoTidy();
-    if (windowId) clearWindowLockIfNoGlance(windowId);
-  }, glanceGraceMs);
-  glanceClearTimers.set(tabId, t);
-  // Also lock tidy for the owning window briefly to avoid race reorders
-  if (windowId) {
-    windowGlanceLocks.set(windowId, Date.now() + GLANCE_DETECT_LOCK_MS);
-    glanceTabWindow.set(tabId, windowId);
-  }
+function supportsTabGroupsApi() {
+  return !!(browser?.tabs?.group && browser?.tabGroups?.update && browser?.tabGroups?.query);
 }
 
-function cancelGlanceClear(tabId) {
-  const t = glanceClearTimers.get(tabId);
-  if (t) {
-    clearTimeout(t);
-    glanceClearTimers.delete(tabId);
-  }
-  glanceTabWindow.delete(tabId);
-  // Clear any window-level lock if no more glance tabs are in that window
-  clearWindowLockIfNoGlance();
+function getGroupOrderMap(groups) {
+  const groupOrderMap = new Map();
+  groups.forEach((group, index) => {
+    const groupName = typeof group === 'string' ? group : group.name;
+    groupOrderMap.set(groupName, index);
+  });
+  return groupOrderMap;
 }
 
-function clearGlanceSet() {
-  for (const id of [...glanceTabIds]) {
-    glanceTabIds.delete(id);
-    cancelGlanceClear(id);
-    glanceTabWindow.delete(id);
-  }
-  maybeAutoTidy();
-  clearWindowLockIfNoGlance();
+function getGroupColor(groupName, groupOrderMap) {
+  const idx = groupOrderMap.get(groupName) ?? 0;
+  return TAB_GROUP_COLORS[idx % TAB_GROUP_COLORS.length];
 }
 
-function clearWindowLockIfNoGlance(windowId = null) {
-  const winToCheck = windowId;
-  if (winToCheck) {
-    for (const id of glanceTabWindow.values()) if (id === winToCheck) return; // still have one
-    windowGlanceLocks.delete(winToCheck);
-    return;
-  }
-  // global check
-  const allWindows = new Set(glanceTabWindow.values());
-  for (const [w, expiry] of windowGlanceLocks) {
-    if (!allWindows.has(w)) windowGlanceLocks.delete(w);
-  }
-}
+async function autoGroupTabs(windowId, tabsWithGroups, groups) {
+  if (!supportsTabGroupsApi()) return;
 
-async function setGlanceGraceMs(ms) {
-  glanceGraceMs = Math.max(0, Number(ms) || 0);
-  await browser.storage.local.set({ glanceGraceMs });
-  // Re-schedule or cancel existing timers
-  if (glanceGraceMs > 0) {
-    for (const id of glanceTabIds) {
-      // Fetch tab window if possible, then schedule
-      browser.tabs.get(id).then(tab => scheduleGlanceClear(id, tab?.windowId)).catch(() => scheduleGlanceClear(id));
+  const groupedTabIds = new Map();
+  const ungroupedTabIds = [];
+
+  tabsWithGroups.forEach(({ tab, group }) => {
+    if (!group) {
+      ungroupedTabIds.push(tab.id);
+      return;
     }
-  } else {
-    for (const id of glanceTabIds) cancelGlanceClear(id);
+    if (!groupedTabIds.has(group)) groupedTabIds.set(group, []);
+    groupedTabIds.get(group).push(tab.id);
+  });
+
+  const groupOrderMap = getGroupOrderMap(groups);
+  const existingGroups = await browser.tabGroups.query({ windowId });
+  const existingByTitle = new Map();
+  existingGroups.forEach(group => {
+    if (group.title && !existingByTitle.has(group.title)) {
+      existingByTitle.set(group.title, group.id);
+    }
+  });
+
+  for (const [groupName, tabIds] of groupedTabIds.entries()) {
+    if (!tabIds.length) continue;
+    const existingGroupId = existingByTitle.get(groupName);
+    let groupId = existingGroupId;
+
+    if (typeof existingGroupId === 'number') {
+      groupId = await browser.tabs.group({ groupId: existingGroupId, tabIds });
+    } else {
+      groupId = await browser.tabs.group({ tabIds, createProperties: { windowId } });
+    }
+
+    await browser.tabGroups.update(groupId, {
+      title: groupName,
+      color: getGroupColor(groupName, groupOrderMap)
+    });
+  }
+
+  if (ungroupedTabIds.length > 0 && browser.tabs.ungroup) {
+    await browser.tabs.ungroup(ungroupedTabIds);
   }
 }
 
@@ -216,73 +173,9 @@ async function renameTab(tabId, title) {
   }
 }
 
-// Helper: Check if a tab is a Zen Browser Glance tab
-async function isGlanceTab(tab) {
-  if (!tab) return false;
-  console.debug(`[isGlanceTab] start: tabId=${tab.id} windowId=${tab.windowId} title="${tab.title}" url="${tab.url}"`);
-
-  // Already confirmed Glance until it grows close to the window size again
-  if (glanceTabIds.has(tab.id)) {
-    try {
-      const win = await browser.windows.get(tab.windowId);
-      const { tabWidth, windowWidth, widthRatio, widthDelta } = getWidthMetrics(tab, win);
-      console.log(`[isGlanceTab] re-checking previously-flagged Glance tab ${tab.id} in window ${tab.windowId}`);
-      console.log(`[isGlanceTab] dimensions: tab width=${tabWidth}, window width=${windowWidth}`);
-      console.log(`[isGlanceTab] ratios: widthRatio=${widthRatio.toFixed(2)} widthDelta=${widthDelta}`);
-
-      if (widthRatio >= GLANCE_CLEAR_RATIO || widthDelta <= GLANCE_CLEAR_DELTA) {
-        console.debug('[isGlanceTab] re-checking previously-flagged Glance tab: clearing flag');
-        glanceTabIds.delete(tab.id);
-        cancelGlanceClear(tab.id);
-        return false;
-      } else {
-        console.debug('[isGlanceTab] still a Glance tab based on size ratios');
-      }
-      return true;
-    } catch (e) {
-      console.debug('[isGlanceTab] previously-flagged: window lookup failed -> keeping sticky flag', e);
-      return true; // Keep sticky flag when in doubt
-    }
-  }
-
-  try {
-    const win = await browser.windows.get(tab.windowId);
-    const { tabWidth, windowWidth, widthRatio, widthDelta } = getWidthMetrics(tab, win);
-    console.log(`[isGlanceTab] Checking new Glance tab ${tab.id} in window ${tab.windowId}`);
-    console.log(`[isGlanceTab] dimensions: tab width=${tabWidth}, window width=${windowWidth}`);
-    console.log(`[isGlanceTab] ratios: widthRatio=${widthRatio.toFixed(2)} widthDelta=${widthDelta}`);
-
-    const looksLikeGlance =
-      tabWidth > 0 &&
-      tabWidth < windowWidth &&
-      (widthRatio <= GLANCE_WIDTH_RATIO_MAX || widthDelta >= GLANCE_WIDTH_DELTA_MIN);
-
-    if (looksLikeGlance) {
-      glanceTabIds.add(tab.id);
-      scheduleGlanceClear(tab.id, tab.windowId);
-      return true;
-    }
-    return false;
-  } catch (error) {
-    console.debug('[isGlanceTab] error computing Glance status:', error);
-    return false;
-  }
-}
-
-function getWidthMetrics(tab, win) {
-  const windowWidth = Math.max(win?.width || 1, 1);
-  const tabWidth = typeof tab.width === 'number' && tab.width > 0 ? tab.width : windowWidth;
-  return {
-    tabWidth,
-    windowWidth,
-    widthRatio: tabWidth / windowWidth,
-    widthDelta: windowWidth - tabWidth,
-  };
-}
-
-// Helper: Check if a tab is bookmarked in Zen Browser
+// Helper: Identify sidebar/bookmarked-style tabs that should not be auto-moved
 const isBookmarkedTab = (tab) => {
-  // Zen Browser specific: bookmarked tabs have skipTabGroups or are in a special container
+  // Some browsers expose sidebar/bookmarked tabs via these properties
   if (tab.skipTabGroups === true) return true;
   if (tab.isInZenSidebar === true) return true;
   
@@ -306,13 +199,6 @@ browser.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     }
   }
   
-  // Check if this is a Glance tab (this will also update tracking)
-  const isGlance = await isGlanceTab(tab);
-  if (isGlance) {
-    console.debug('⏭️ Skipping auto-tidy: tab is a Glance tab', tab.id);
-    return;
-  }
-
   // Don't trigger auto-tidy if the updated tab is bookmarked
   if (isBookmarkedTab(tab)) {
     console.debug('⏭️ Skipping auto-tidy: tab is a bookmarked tab', tab.id);
@@ -329,28 +215,14 @@ browser.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 // Clean up stored titles for closed tabs
 browser.tabs.onRemoved.addListener((tabId) => {
   originalTitles.delete(tabId);
-  const wasGlance = glanceTabIds.delete(tabId); // Also clean up Glance tab tracking
-  const windowId = glanceTabWindow.get(tabId);
-  cancelGlanceClear(tabId);
-  if (wasGlance) clearWindowLockIfNoGlance(windowId);
-  if (wasGlance) {
-    // If a Glance tab was removed, the window may now be safe for tidy
-    maybeAutoTidy();
-  }
 });
 
 // Listen for when tabs are attached/detached (moved between windows)
-// This can happen when a Glance tab becomes a regular tab
-browser.tabs.onAttached.addListener(async (tabId) => {
-  const tab = await browser.tabs.get(tabId);
-  const stillGlance = await isGlanceTab(tab);
-  if (!stillGlance) {
-    console.debug('Tab promoted from Glance during attach, triggering tidy:', tabId);
-    maybeAutoTidy();
-  }
+browser.tabs.onAttached.addListener(() => {
+  maybeAutoTidy();
 });
 
-// Helper: only operate on normal browser windows (avoid Glance/popup/devtools)
+// Helper: only operate on normal browser windows (avoid popup/devtools)
 async function getFocusedNormalWindow() {
   const win = await browser.windows.getLastFocused({ populate: true });
   if (!win) return null;
@@ -358,14 +230,6 @@ async function getFocusedNormalWindow() {
   // Rule 1: Explicitly ignore non-normal window types
   if (win.type && win.type !== 'normal') {
     console.debug('Ignoring non-normal window type:', win.type);
-    return null;
-  }
-
-  // Rule 2: Heuristic for Zen Browser's "Glance" feature.
-  // Assume that a window with only one tab and no pinned tabs is a temporary Glance window.
-  const isLikelyGlanceWindow = win.tabs && win.tabs.length <= 1 && !win.tabs.some(t => t.pinned);
-  if (isLikelyGlanceWindow) {
-    console.debug('Ignoring likely Glance window.');
     return null;
   }
 
@@ -384,75 +248,36 @@ async function tidy() {
 
   console.log('✅ Operating on window:', currentWindow.id);
 
-  const [{ pairings, groups }] = await Promise.all([
-    browser.storage.local.get({ pairings: [], groups: [] })
+  const [{ pairings, groups, autoGroupTabsEnabled }] = await Promise.all([
+    browser.storage.local.get({ pairings: [], groups: [], autoGroupTabsEnabled: true })
   ]);
 
   const tabs = await browser.tabs.query({
     windowId: currentWindow.id
   });
 
-  // Derive glance map from the sticky set only (we update the set when tabs change)
-  const glanceLookup = new Map(tabs.map(tab => [tab.id, glanceTabIds.has(tab.id)]));
-
   // Separate tabs into categories
   const pinnedTabs = tabs.filter(tab => tab.pinned);
   const bookmarkedTabs = tabs.filter(tab => !tab.pinned && isBookmarkedTab(tab));
-  const glanceTabs = tabs.filter(tab =>
-    !tab.pinned && !isBookmarkedTab(tab) && glanceLookup.get(tab.id)
-  );
-
-  // Tabs that are sticky flagged as Glance (tracked across events)
-  const stickyGlanceTabs = tabs.filter(tab => !tab.pinned && !isBookmarkedTab(tab) && glanceTabIds.has(tab.id));
-  const regularTabs = tabs.filter(tab =>
-    !tab.pinned && !isBookmarkedTab(tab) && !glanceLookup.get(tab.id) && !glanceTabIds.has(tab.id)
-  );
+  const regularTabs = tabs.filter(tab => !tab.pinned && !isBookmarkedTab(tab));
   
   console.log('Tab categories:', {
     pinned: pinnedTabs.length,
     bookmarked: bookmarkedTabs.length,
-    glance: glanceTabs.length,
     regular: regularTabs.length
   });
-  // Pre-scan a few top tabs to catch newly-created Glance overlays before tidy
-  const PRE_SCAN_EXTRA = 3;
-  const earlyCheckCount = Math.min(tabs.length, pinnedTabs.length + PRE_SCAN_EXTRA);
-  for (let i = 0; i < earlyCheckCount; i++) {
-    const t = tabs[i];
-    if (!t || t.pinned || isBookmarkedTab(t) || glanceTabIds.has(t.id)) continue;
-    try {
-      const { tabWidth, windowWidth, widthRatio, widthDelta } = getWidthMetrics(t, currentWindow);
-      if (tabWidth > 0 && tabWidth < windowWidth && (widthRatio <= GLANCE_WIDTH_RATIO_MAX || widthDelta >= GLANCE_WIDTH_DELTA_MIN)) {
-        glanceTabIds.add(t.id);
-        scheduleGlanceClear(t.id, t.windowId);
-        console.debug('Pre-scan detected Glance-like tab; added to set:', t.id);
-      }
-    } catch (e) {
-      console.debug('Pre-scan failed for tab:', t.id, e);
-    }
-  }
-  // No window-level heuristic: only use the tracked set for determining presence of Glance tabs.
-  // Avoid rearranging the window while any Glance overlays are active.
-  if (glanceTabs.length > 0) {
-    console.debug('⏭️ Skipping tidy: Glance tabs present in window.');
-    return;
-  }
 
   if (regularTabs.length === 0) return;
 
-  // Find the safe starting index: after all pinned, bookmarked, and Glance tabs
-  // This is where regular tabs should start. Include sticky Glance tabs into the immovable set
-  const allImmovableTabs = [...pinnedTabs, ...bookmarkedTabs, ...glanceTabs, ...stickyGlanceTabs];
+  // Find the safe starting index: after all pinned and bookmarked tabs
+  // This is where regular tabs should start
+  const allImmovableTabs = [...pinnedTabs, ...bookmarkedTabs];
   const safeStartIndex = allImmovableTabs.length > 0 
     ? Math.max(...allImmovableTabs.map(t => t.index)) + 1
     : 0;
 
   // Create a map of group names to their order based on groups array
-  const groupOrderMap = new Map();
-  groups.forEach((group, index) => {
-    const groupName = typeof group === 'string' ? group : group.name;
-    groupOrderMap.set(groupName, index);
-  });
+  const groupOrderMap = getGroupOrderMap(groups);
 
   // Associate tabs with their pairings and groups (only regular tabs)
   const tabsWithGroups = regularTabs.map(tab => {
@@ -537,10 +362,8 @@ async function tidy() {
   );
 
   // Move tabs into their sorted order, starting from the safe index
-  // This ensures we NEVER move tabs above pinned/bookmarked/Glance tabs
+  // This ensures we NEVER move tabs above pinned/bookmarked tabs
   let tabIds = tabsWithGroups.map(({ tab }) => tab.id);
-  // Safety: exclude any tabs we still consider Glance (sticky set) or newly detected
-  tabIds = tabIds.filter(id => !glanceTabIds.has(id) && !glanceLookup.get(id));
   // Also do not move any tab that currently sits in the immovable area
   tabIds = tabIds.filter(id => {
     const t = tabs.find(tt => tt.id === id);
@@ -553,6 +376,10 @@ async function tidy() {
   });
   if (tabIds.length > 0) {
     await browser.tabs.move(tabIds, { index: safeStartIndex });
+  }
+
+  if (autoGroupTabsEnabled) {
+    await autoGroupTabs(currentWindow.id, tabsWithGroups, groups);
   }
 }
 
@@ -572,16 +399,7 @@ async function maybeAutoTidy() {
   // Use the full check to see if we are in a valid window
   const win = await getFocusedNormalWindow();
   if (!win) {
-    // If getFocusedNormalWindow returns null, it's a Glance window or other invalid type.
-    // Do not schedule a tidy operation.
-    console.debug('Auto-tidy skipped for non-normal or Glance window.');
-    return;
-  }
-
-  // If the window has a recent glance creation, avoid scheduling tidy to allow set updates
-  const lockExpiry = windowGlanceLocks.get(win.id);
-  if (lockExpiry && Date.now() < lockExpiry) {
-    console.debug('Auto-tidy skipped due to recent Glance detection lock');
+    console.debug('Auto-tidy skipped for non-normal window.');
     return;
   }
 
@@ -594,28 +412,11 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     tidy();
     sendResponse({ success: true });
   }
-  if (message.action === 'clearGlanceSet') {
-    clearGlanceSet();
-    sendResponse({ success: true });
-  }
-  if (message.action === 'setGlanceGracePeriod') {
-    setGlanceGraceMs(message.graceMs || 0).then(() => sendResponse({ success: true })).catch(e => sendResponse({ success: false, error: e?.message }));
-    return true;
-  }
-  if (message.action === 'getGlanceGraceMs') {
-    sendResponse({ graceMs: glanceGraceMs });
-  }
   return true; // Keep the message channel open for async response
 });
 
 // Listen for tab events
-browser.tabs.onCreated.addListener(async (tab) => {
-  try {
-    // Update glance set for newly created tab
-    await isGlanceTab(tab);
-  } catch (e) {
-    // ignore
-  }
+browser.tabs.onCreated.addListener(() => {
   maybeAutoTidy();
 });
 

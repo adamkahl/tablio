@@ -27,8 +27,9 @@ if (typeof browser === 'undefined') {
 
 // Load settings
 async function loadSettings() {
-  const { autoTidyEnabled } = await browser.storage.local.get({ autoTidyEnabled: false });
+  const { autoTidyEnabled, autoGroupTabsEnabled } = await browser.storage.local.get({ autoTidyEnabled: false, autoGroupTabsEnabled: true });
   document.getElementById('auto-tidy-toggle').checked = autoTidyEnabled;
+  document.getElementById('auto-group-tabs-toggle').checked = autoGroupTabsEnabled;
 }
 
 function handleSearch(query) {
@@ -46,6 +47,12 @@ document.getElementById('auto-tidy-toggle').addEventListener('change', async (e)
   const autoTidyEnabled = e.target.checked;
   await browser.storage.local.set({ autoTidyEnabled });
   showStatus(autoTidyEnabled ? 'Auto-tidy enabled' : 'Auto-tidy disabled');
+});
+
+document.getElementById('auto-group-tabs-toggle').addEventListener('change', async (e) => {
+  const autoGroupTabsEnabled = e.target.checked;
+  await browser.storage.local.set({ autoGroupTabsEnabled });
+  showStatus(autoGroupTabsEnabled ? 'Automatic tab grouping enabled' : 'Automatic tab grouping disabled');
 });
 
 document.getElementById('add-pairing').addEventListener('click', async () => {

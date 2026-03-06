@@ -50,14 +50,15 @@ export function clearGroupDropIndicators() {
  * Export settings to JSON file
  */
 export async function exportSettings(browser) {
-  const data = await browser.storage.local.get({ pairings: [], groups: [], autoTidyEnabled: false });
+  const data = await browser.storage.local.get({ pairings: [], groups: [], autoTidyEnabled: false, autoGroupTabsEnabled: true });
   
   const exportData = {
     version: '1.1',
     exportDate: new Date().toISOString(),
     pairings: data.pairings,
     groups: data.groups,
-    autoTidyEnabled: data.autoTidyEnabled
+    autoTidyEnabled: data.autoTidyEnabled,
+    autoGroupTabsEnabled: data.autoGroupTabsEnabled
   };
   
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
@@ -88,7 +89,8 @@ export async function loadRecommendedDefaults(browser, loadGroups, loadPairings,
     await browser.storage.local.set({
       pairings: importData.pairings || [],
       groups: importData.groups || [],
-      autoTidyEnabled: importData.autoTidyEnabled ?? false
+      autoTidyEnabled: importData.autoTidyEnabled ?? false,
+      autoGroupTabsEnabled: importData.autoGroupTabsEnabled ?? true
     });
 
     await loadGroups(browser);  // Add browser parameter
@@ -123,7 +125,8 @@ export async function importSettings(file, browser, loadGroups, loadPairings, lo
     await browser.storage.local.set({
       pairings: importData.pairings,
       groups: importData.groups,
-      autoTidyEnabled: importData.autoTidyEnabled ?? false
+      autoTidyEnabled: importData.autoTidyEnabled ?? false,
+      autoGroupTabsEnabled: importData.autoGroupTabsEnabled ?? true
     });
     
     await loadGroups(browser);  // Add browser parameter
@@ -151,7 +154,8 @@ export async function clearAllSettings(browser, loadGroups, loadPairings, loadSe
   await browser.storage.local.set({
     pairings: [],
     groups: [],
-    autoTidyEnabled: false
+    autoTidyEnabled: false,
+    autoGroupTabsEnabled: true
   });
 
   await loadGroups(browser);  // Add browser parameter
