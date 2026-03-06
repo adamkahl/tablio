@@ -167,7 +167,7 @@ export async function clearAllSettings(browser, loadGroups, loadPairings, loadSe
 /**
  * Reorder groups after drag and drop
  */
-export async function reorderGroups(fromIndex, toIndex, browser, loadGroups) {
+export async function reorderGroups(fromIndex, toIndex, browser, loadGroups, loadPairings) {
   if (Number.isNaN(fromIndex) || Number.isNaN(toIndex)) return;
 
   const { groups } = await browser.storage.local.get({ groups: [] });

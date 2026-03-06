@@ -130,25 +130,46 @@ function findBestMatchingGroup(groups, tab) {
   return bestMatch;
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function stripManagedPrefixes(title, groupCategory = '', pairingEmoji = '') {
+  let normalized = title || '';
+  const prefixTokens = [groupCategory, pairingEmoji].filter(Boolean).map(escapeRegExp);
+  if (!prefixTokens.length) return normalized;
+
+  const tokenPattern = `(?:${prefixTokens.join('|')})`;
+  const prefixPattern = new RegExp(`^(?:\\s*${tokenPattern}\\s+)+`, 'u');
+
+  while (prefixPattern.test(normalized)) {
+    normalized = normalized.replace(prefixPattern, '');
+  }
+
+  return normalized.trimStart();
+}
+
 // Get or store the original title for a tab
-function getOriginalTitle(tab) {
+function getOriginalTitle(tab, groupCategory = '', pairingEmoji = '') {
   const stored = originalTitles.get(tab.id);
+  const hasEmojiPrefix = /^[\p{Extended_Pictographic}\p{Emoji_Presentation}\uFE0F\s]+/u.test(tab.title);
   
   // If we have a stored title, check if the current title looks modified (has emojis)
   if (stored) {
     // If current title doesn't start with emoji characters, update the stored original
     // This handles cases where the page changed its title naturally
-    const hasEmojiPrefix = /^[\p{Emoji}\s]+/u.test(tab.title);
     if (!hasEmojiPrefix) {
-      originalTitles.set(tab.id, tab.title);
-      return tab.title;
+      const normalized = stripManagedPrefixes(tab.title, groupCategory, pairingEmoji);
+      originalTitles.set(tab.id, normalized || tab.title);
+      return normalized || tab.title;
     }
     return stored;
   }
   
-  // First time seeing this tab - store its current title as original
-  originalTitles.set(tab.id, tab.title);
-  return tab.title;
+  // First time seeing this tab - store a normalized title as original
+  const normalized = stripManagedPrefixes(tab.title, groupCategory, pairingEmoji);
+  originalTitles.set(tab.id, normalized || tab.title);
+  return normalized || tab.title;
 }
 
 // Rename a tab - handles both Chrome and Firefox
@@ -193,7 +214,7 @@ browser.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   
   // If title changed and doesn't have emoji prefix, update stored original
   if (changeInfo.title) {
-    const hasEmojiPrefix = /^[\p{Emoji}\s]+/u.test(changeInfo.title);
+    const hasEmojiPrefix = /^[\p{Extended_Pictographic}\p{Emoji_Presentation}\uFE0F\s]+/u.test(changeInfo.title);
     if (!hasEmojiPrefix) {
       originalTitles.set(tabId, changeInfo.title);
     }
@@ -278,6 +299,8 @@ async function tidy() {
 
   // Create a map of group names to their order based on groups array
   const groupOrderMap = getGroupOrderMap(groups);
+  const pairingOrderMap = new Map();
+  pairings.forEach((pairing, index) => pairingOrderMap.set(pairing, index));
 
   // Associate tabs with their pairings and groups (only regular tabs)
   const tabsWithGroups = regularTabs.map(tab => {
@@ -301,7 +324,7 @@ async function tidy() {
     const shouldModifyTitle = hasPairingName || hasGroupCategory || (pairing && pairing.emoji);
     
     // Always use the original title as the base
-    const originalTitle = getOriginalTitle(tab);
+    const originalTitle = getOriginalTitle(tab, hasGroupCategory ? group.category : '', pairing?.emoji || '');
     let displayTitle = originalTitle;
 
     if (shouldModifyTitle) {
@@ -331,6 +354,7 @@ async function tidy() {
 
     // Get group order (ungrouped tabs go to end)
     const groupOrder = groupName ? (groupOrderMap.get(groupName) ?? groups.length) : groups.length;
+    const pairingOrder = pairing ? (pairingOrderMap.get(pairing) ?? Number.MAX_SAFE_INTEGER) : Number.MAX_SAFE_INTEGER;
     
     return {
       tab,
@@ -338,18 +362,24 @@ async function tidy() {
       group: groupName,
       displayTitle,
       groupOrder,
+      pairingOrder,
       shouldRename: shouldModifyTitle
     };
   });
 
-  // Sort tabs: first by group order, then alphabetically within groups
+  // Sort tabs: first by group order, then URL pattern order, then alphabetically
   tabsWithGroups.sort((a, b) => {
     // First, sort by group order
     if (a.groupOrder !== b.groupOrder) {
       return a.groupOrder - b.groupOrder;
     }
+
+    // Within same group, honor URL pattern order from the pairings list
+    if (a.pairingOrder !== b.pairingOrder) {
+      return a.pairingOrder - b.pairingOrder;
+    }
     
-    // Within same group, sort alphabetically by display title
+    // Fallback sort alphabetically by display title
     return a.displayTitle.toLowerCase().localeCompare(b.displayTitle.toLowerCase());
   });
 

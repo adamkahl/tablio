@@ -93,7 +93,7 @@ export async function loadGroups(browser, loadPairings) {
     
     div.addEventListener('dragstart', handleDragStart);
     div.addEventListener('dragover', handleDragOver);
-    div.addEventListener('drop', (e) => handleDrop(e, browser, loadGroups));
+    div.addEventListener('drop', (e) => handleDrop(e, browser, loadGroups, loadPairings));
     div.addEventListener('dragend', handleDragEnd);
     
     container.appendChild(div);
@@ -298,7 +298,7 @@ function handleDragOver(e) {
   return false;
 }
 
-function handleDrop(e, browser, loadGroups) {
+function handleDrop(e, browser, loadGroups, loadPairings) {
   if (e.stopPropagation) e.stopPropagation();
   const over = e.currentTarget;
   if (!draggedElement || draggedElement === over) {
@@ -322,7 +322,7 @@ function handleDrop(e, browser, loadGroups) {
   const toIndex = nodes.indexOf(draggedElement);
 
   // Persist the new order
-  reorderGroups(fromIndex, toIndex, browser, loadGroups);
+  reorderGroups(fromIndex, toIndex, browser, loadGroups, loadPairings);
 
   clearGroupDropIndicators();
   return false;
