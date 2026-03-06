@@ -9,11 +9,19 @@ const originalTitles = new Map();
 // Debounce timer for auto-tidy
 let autoTidyTimeout = null;
 let tabGroupsUnsupportedLogged = false;
+let tabGroupsFailureLogged = false;
 
 const TAB_GROUP_COLORS = ['blue', 'green', 'yellow', 'orange', 'red', 'purple', 'pink', 'cyan', 'grey'];
 
 function supportsTabGroupsApi() {
-  return !!(browser?.tabs?.group && browser?.tabGroups?.update && browser?.tabGroups?.query);
+  return !!(browser?.tabs?.group);
+}
+
+function logTabGroupsFailureOnce(message, error = null) {
+  if (tabGroupsFailureLogged) return;
+  const suffix = error?.message ? ` (${error.message})` : '';
+  console.warn(`[tablio] ${message}${suffix}`);
+  tabGroupsFailureLogged = true;
 }
 
 function getGroupOrderMap(groups) {
@@ -33,7 +41,7 @@ function getGroupColor(groupName, groupOrderMap) {
 async function autoGroupTabs(windowId, tabsWithGroups, groups) {
   if (!supportsTabGroupsApi()) {
     if (!tabGroupsUnsupportedLogged) {
-      console.debug('Automatic tab grouping skipped: tabGroups API is unavailable in this browser.');
+      console.warn('[tablio] Automatic tab grouping skipped: tabs.group API is unavailable in this browser.');
       tabGroupsUnsupportedLogged = true;
     }
     return;
@@ -52,33 +60,49 @@ async function autoGroupTabs(windowId, tabsWithGroups, groups) {
   });
 
   const groupOrderMap = getGroupOrderMap(groups);
-  const existingGroups = await browser.tabGroups.query({ windowId });
   const existingByTitle = new Map();
-  existingGroups.forEach(group => {
-    if (group.title && !existingByTitle.has(group.title)) {
-      existingByTitle.set(group.title, group.id);
+  if (browser?.tabGroups?.query) {
+    try {
+      const existingGroups = await browser.tabGroups.query({ windowId });
+      existingGroups.forEach(group => {
+        if (group.title && !existingByTitle.has(group.title)) {
+          existingByTitle.set(group.title, group.id);
+        }
+      });
+    } catch (error) {
+      logTabGroupsFailureOnce('Could not query existing tab groups; continuing without reuse.', error);
     }
-  });
+  }
 
   for (const [groupName, tabIds] of groupedTabIds.entries()) {
     if (!tabIds.length) continue;
-    const existingGroupId = existingByTitle.get(groupName);
-    let groupId = existingGroupId;
+    try {
+      const existingGroupId = existingByTitle.get(groupName);
+      let groupId = existingGroupId;
 
-    if (typeof existingGroupId === 'number') {
-      groupId = await browser.tabs.group({ groupId: existingGroupId, tabIds });
-    } else {
-      groupId = await browser.tabs.group({ tabIds, createProperties: { windowId } });
+      if (typeof existingGroupId === 'number') {
+        groupId = await browser.tabs.group({ groupId: existingGroupId, tabIds });
+      } else {
+        groupId = await browser.tabs.group({ tabIds, createProperties: { windowId } });
+      }
+
+      if (browser?.tabGroups?.update) {
+        await browser.tabGroups.update(groupId, {
+          title: groupName,
+          color: getGroupColor(groupName, groupOrderMap)
+        });
+      }
+    } catch (error) {
+      logTabGroupsFailureOnce('Could not create or update one or more tab groups.', error);
     }
-
-    await browser.tabGroups.update(groupId, {
-      title: groupName,
-      color: getGroupColor(groupName, groupOrderMap)
-    });
   }
 
   if (ungroupedTabIds.length > 0 && browser.tabs.ungroup) {
-    await browser.tabs.ungroup(ungroupedTabIds);
+    try {
+      await browser.tabs.ungroup(ungroupedTabIds);
+    } catch (error) {
+      logTabGroupsFailureOnce('Could not ungroup tabs that have no assigned group.', error);
+    }
   }
 }
 

@@ -26,7 +26,7 @@ if (typeof browser === 'undefined') {
 }
 
 function supportsTabGroupsApi() {
-  return !!(browser?.tabs?.group && browser?.tabGroups?.update && browser?.tabGroups?.query);
+  return !!(browser?.tabs?.group);
 }
 
 // Load settings
